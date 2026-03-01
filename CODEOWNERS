@@ -1,0 +1,8 @@
+# iOS player
+TASK/TASK/Modules/Player/   @marrow-ios-player
+
+# Android player
+android/player/             @marrow-android-player
+
+# Generated sources - do not attribute bugs here
+TASK/TASK/Generated/        @marrow-tooling

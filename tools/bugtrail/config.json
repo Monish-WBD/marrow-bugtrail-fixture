@@ -1,0 +1,30 @@
+{
+  "historyLimit": 60,
+  "expandToModule": true,
+  "halfLifeDays": 30,
+  "moduleWeight": 0.5,
+  "cosmeticPenalty": 0.75,
+  "minConfidence": 0.35,
+  "maxSuspects": 3,
+  "excludeReverts": true,
+  "weights": {
+    "recency": 0.35,
+    "keyword": 0.35,
+    "seedFile": 0.20,
+    "substantive": 0.10
+  },
+  "botAuthorPatterns": [
+    "\\[bot\\]",
+    "^dependabot",
+    "^github-actions",
+    "^svc-"
+  ],
+  "generatedPathGlobs": [
+    "*/Generated/*",
+    "*/generated/*"
+  ],
+  "generatedMarkers": [
+    "GENERATED CODE DO NOT MODIFY",
+    "@generated"
+  ]
+}
