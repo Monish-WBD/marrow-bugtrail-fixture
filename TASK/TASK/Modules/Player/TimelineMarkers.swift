@@ -22,6 +22,6 @@ public final class TimelineMarkers {
     }
 
     public func marker(at position: TimeInterval) -> TimelineMarker? {
-        markers.first { position >= $0.startTime && position < $0.endTime }
+        markers.last { position >= $0.startTime && position <= $0.endTime }
     }
 }
