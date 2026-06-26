@@ -21,3 +21,5 @@ public final class AdSkipManager {
         markers.marker(at: position)?.endTime
     }
 }
+
+// Note: skip eligibility is evaluated per playback position.
