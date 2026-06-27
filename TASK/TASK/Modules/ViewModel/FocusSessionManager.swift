@@ -87,3 +87,5 @@ class FocusSessionManager: ObservableObject {
         return sessions
     }
 }
+
+// hotfix: widen session timer tolerance
