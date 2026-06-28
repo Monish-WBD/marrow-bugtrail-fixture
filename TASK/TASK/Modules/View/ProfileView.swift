@@ -88,3 +88,5 @@ struct ProfileView: View {
 }
 
 // MARK: - Styling pass (spacing tweaks)
+
+// Reverted styling pass.
