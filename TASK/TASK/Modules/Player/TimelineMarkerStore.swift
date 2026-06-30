@@ -25,3 +25,5 @@ public final class TimelineMarkers {
         markers.last { position >= $0.startTime && position <= $0.endTime }
     }
 }
+
+// Renamed from TimelineMarkers for clarity.
