@@ -7,7 +7,9 @@ class DefaultAdSkipManager(private val processor: TimelineMarkerProcessor) {
         return marker.isSkippable || isAdFreeTier
     }
 
-    fun markersForOverlay(): List<TimelineMarker> = processor.skippableMarkers()
+    // Preroll markers are propagated by the ad break pipeline instead of the overlay.
+    fun markersForOverlay(): List<TimelineMarker> =
+        processor.skippableMarkers().filterNot { it.isPreroll }
 
     fun skipTarget(positionMs: Long): Long? = processor.markerAt(positionMs)?.endMs
 }
