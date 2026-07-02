@@ -1,0 +1,46 @@
+{
+  "description": "Synthetic bugs with known culprit PRs, for scoring suspect-PR attribution.",
+  "reportedAt": "2026-07-02T04:00:00Z",
+  "bugs": [
+    {
+      "bugId": "SYN-001",
+      "platform": "ios",
+      "title": "Skip Intro button missing during preroll on ad-free tier",
+      "seedFile": "TASK/TASK/Modules/Player/AdSkipManager.swift",
+      "truePR": 5,
+      "trueAuthor": "Carol Nair",
+      "mergeStrategy": "squash",
+      "tests": ["keyword match on preroll/skip", "decoy PR #7 touches same file", "decoy PR #6 same timeframe"]
+    },
+    {
+      "bugId": "SYN-002",
+      "platform": "android",
+      "title": "Skip Intro marker not propagated to overlay for preroll",
+      "seedFile": "android/player/timelinemanager/src/main/java/com/marrow/player/timelinemanager/adskip/DefaultAdSkipManager.kt",
+      "truePR": 11,
+      "trueAuthor": "Bob Sharma",
+      "mergeStrategy": "squash",
+      "tests": ["platform routing from .kt path", "module expansion"]
+    },
+    {
+      "bugId": "SYN-003",
+      "platform": "ios",
+      "title": "Timeline marker lookup returns a stale marker at boundary",
+      "seedFile": "TASK/TASK/Modules/Player/TimelineMarkerStore.swift",
+      "truePR": 4,
+      "trueAuthor": "Alice Kumar",
+      "mergeStrategy": "merge",
+      "tests": [
+        "git log --follow across the PR #10 rename",
+        "culprit predates the rename, so it is unreachable without --follow",
+        "the rename itself (PR #10) must not outrank the real change"
+      ]
+    }
+  ],
+  "exclusionCases": {
+    "botCommit": "chore(deps): regenerate analytics events from schema v1.4.0",
+    "generatedFile": "TASK/TASK/Generated/AnalyticsEvents.swift",
+    "revertPR": 8,
+    "directCommitNoPR": "hotfix: widen session timer tolerance"
+  }
+}
