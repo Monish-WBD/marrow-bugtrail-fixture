@@ -611,23 +611,46 @@ Behind the Cursor skill, gated on human review. Never auto-commit a generated te
 
 ## 13. Work split and next steps
 
-### Suggested split
+### Suggested split — five developers, one repository, one target repo
 
-| Owner | Area |
-| --- | --- |
-| Dev A | `JiraSource` — issue + CodeSage comment via the approved Atlassian integration |
-| Dev B | `JiraCommentSink` + JQL poller + idempotency marker |
-| Dev C (iOS) | Repo routing and validation against the iOS repository |
-| Dev D (Android) | Same for Android, plus a Gradle target so the Kotlin test is executed too |
+Scope is deliberately narrowed to a **single target repository**. Multi-repo
+routing is a day-two concern and buys nothing in a demo.
+
+Each lane owns its own files, so five people can work in one repository without
+colliding. The interfaces between lanes are the existing dataclasses in
+`models.py`, which are agreed in the first half hour and then frozen.
+
+| Lane | Owner | Owns these files | Delivers |
+| --- | --- | --- | --- |
+| 1. Core + integration | Monish | `models.py`, `config.json`, `cli.py`, `report.py` | Reviews and merges every PR, keeps `main` green, owns the demo script |
+| 2. Jira read + sanitiser | Dev 2 | `jira/source.py`, `sanitiser.py` | Issue + CodeSage comment via the approved Atlassian integration, returning a `TriageInput`. Redaction happens here, at the boundary where external text enters |
+| 3. Jira write | Dev 3 | `jira/sink.py` | Posts the report as a comment, with the marker and update-in-place so re-runs never duplicate |
+| 4. Scheduling + audit | Dev 4 | `jira/poller.py`, `audit.py` | JQL poller, shadow mode (log, do not post), secrets loading, and a log of what was read, decided, and posted |
+| 5. Eval at scale | Dev 5 | `eval/` | Runs `mine_szz.py` over a large real repository and reports precision@1 and @3. **Needs no Jira access, so it starts immediately and cannot be blocked** |
+
+### Rules that keep five people out of each other's way
+
+- **Only lane 1 edits the shared files.** Everyone else opens an issue or asks;
+  a drive-by edit to `models.py` or `config.json` is what causes the painful conflict.
+- **Freeze the interfaces first, then build against fakes.** Lanes 3 and 4 should
+  never wait on lane 2 — a stub `TriageInput` unblocks them on day one.
+- **Merge small and often.** No branch older than half a day.
+- **Shadow mode until the very end.** Nothing posts to a real ticket until the
+  read path, the sanitiser, and idempotency are all in and reviewed.
 
 ### Priority order
 
 1. **Real eval on a large repository** — the number that makes everything else believable
-2. **Jira read path** (shadow mode — log, do not post)
+2. **Jira read path** in shadow mode, with the sanitiser in front of it
 3. **Jira write path** with idempotency
 4. **JQL poller**
-5. **Sanitiser** with tests, before anything reaches a model
-6. **Feedback label** to collect ground truth continuously
+5. **Feedback label** to collect ground truth continuously
+
+### If time runs short, land these three
+
+The eval number, the read path, and a report printed to the console. A
+believable precision figure with a manual paste into Jira demos far better than
+a fully automated loop whose accuracy nobody can vouch for.
 
 ### The 30-second summary for a reviewer
 
