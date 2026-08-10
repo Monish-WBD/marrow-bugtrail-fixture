@@ -151,6 +151,35 @@ def render(result: Result) -> str:
     return "\n".join(out)
 
 
+def to_dict(result: Result) -> dict:
+    """Machine-readable result, for CI or a future Jira adapter."""
+    bug = result.bug
+    return {
+        "bugId": bug.bug_id,
+        "title": bug.display_title or _headline(bug.title),
+        "seedFile": bug.seed_file,
+        "platform": bug.platform,
+        "confidence": result.confidence,
+        "confidenceLabel": confidence_label(result.confidence),
+        "suspects": [
+            {
+                "pr": s.candidate.pr_number,
+                "commit": s.candidate.commit.sha,
+                "subject": s.candidate.commit.subject,
+                "author": s.candidate.commit.author_name,
+                "authorEmail": s.candidate.commit.author_email,
+                "landedAt": s.candidate.commit.authored_at.isoformat(),
+                "path": s.candidate.path,
+                "linesChanged": s.candidate.lines_changed,
+                "score": s.score,
+                "reasons": s.reasons,
+            }
+            for s in result.suspects
+        ],
+        "excluded": list(dict.fromkeys(result.excluded)),
+    }
+
+
 def run_eval(repo: str, manifest_path: Path, config: dict) -> int:
     data = json.loads(manifest_path.read_text())
     truth = {b["bugId"]: b for b in data["bugs"]}
@@ -208,6 +237,7 @@ def main() -> int:
     parser.add_argument(
         "--report", action="store_true", help="render the full attribution report"
     )
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -232,7 +262,10 @@ def main() -> int:
                     break
         bug = codesage_source(comment_path, bug_id, reported_at, title=title)
         result = analyse(args.repo, bug, config)
-        print(render_report(args.repo, result) if args.report else render(result))
+        if args.json:
+            print(json.dumps(to_dict(result), indent=2))
+        else:
+            print(render_report(args.repo, result) if args.report else render(result))
         return 0
 
     if args.eval:
@@ -246,8 +279,12 @@ def main() -> int:
             return 2
 
     for bug in bugs:
-        print(render(analyse(args.repo, bug, config)))
-        print()
+        result = analyse(args.repo, bug, config)
+        if args.json:
+            print(json.dumps(to_dict(result), indent=2))
+        else:
+            print(render_report(args.repo, result) if args.report else render(result))
+            print()
     return 0
 
 
