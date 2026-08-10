@@ -42,7 +42,8 @@ cp "$VERIFY_DIR/main.swift" "$BUILD/main.swift"
 
 run_at() { # run_at <label> <variant-file> <expected: fail|pass>
   local label="$1" variant="$2" expected="$3" binary="$BUILD/check_$1"
-  swiftc -O -o "$binary" "$variant" "$BUILD/TimelineMarkerStore.swift" "$BUILD/main.swift" 2>"$BUILD/$1.build.log" || {
+  # No -O: this only needs to run a single assertion, and Onone halves build time.
+  swiftc -Onone -o "$binary" "$variant" "$BUILD/TimelineMarkerStore.swift" "$BUILD/main.swift" 2>"$BUILD/$1.build.log" || {
     echo "  build error:"; sed 's/^/    /' "$BUILD/$1.build.log"; return 2
   }
   local output status
