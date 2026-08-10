@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from archaeology import build_candidates
+from codesage import parse_comment
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
 
@@ -42,6 +43,30 @@ def fixture_source(manifest_path: Path) -> list:
     ]
 
 
+def codesage_source(
+    comment_path: Path, bug_id: str, reported_at: datetime
+) -> TriageInput:
+    """Build a seed from a CodeSage comment on disk.
+
+    Same shape a Jira source would produce, so the engine cannot tell them apart.
+    """
+    triage = parse_comment(comment_path.read_text())
+    if triage is None:
+        raise ValueError(
+            "%s is not a parseable CodeSage comment (no marker or no 'File:' line)"
+            % comment_path
+        )
+
+    # The comment carries no title, so the summary stands in for keyword mining.
+    return TriageInput(
+        bug_id=bug_id,
+        title=triage.summary or triage.where_to_start,
+        seed_file=triage.seed_file,
+        reported_at=reported_at,
+        platform=triage.platform,
+    )
+
+
 def analyse(repo: str, bug: TriageInput, config: dict) -> Result:
     keywords = extract_keywords(bug.title)
     candidates, excluded = build_candidates(
@@ -62,11 +87,18 @@ def analyse(repo: str, bug: TriageInput, config: dict) -> Result:
     )
 
 
+def _headline(text: str, width: int = 66) -> str:
+    single_line = " ".join(text.split())
+    if len(single_line) <= width:
+        return single_line
+    return single_line[: width - 3].rstrip() + "..."
+
+
 def render(result: Result) -> str:
     bug = result.bug
     out = []
     out.append("=" * 74)
-    out.append("%s  %s" % (bug.bug_id, bug.title))
+    out.append("%s  %s" % (bug.bug_id, _headline(bug.title)))
     out.append("seed: %s" % bug.seed_file)
     out.append(
         "platform: %s   confidence: %s (%.2f)"
@@ -158,10 +190,28 @@ def main() -> int:
     )
     parser.add_argument("--bug", help="analyse a single bug id")
     parser.add_argument("--eval", action="store_true", help="score against ground truth")
+    parser.add_argument(
+        "--comment", help="path to a CodeSage comment to use as the seed"
+    )
+    parser.add_argument("--reported-at", help="ISO timestamp the bug was reported")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     manifest = Path(args.manifest)
+
+    if args.comment:
+        comment_path = Path(args.comment)
+        if args.reported_at:
+            reported_at = datetime.fromisoformat(args.reported_at.replace("Z", "+00:00"))
+        else:
+            data = json.loads(manifest.read_text())
+            reported_at = datetime.fromisoformat(
+                data["reportedAt"].replace("Z", "+00:00")
+            )
+        bug_id = args.bug or comment_path.stem
+        bug = codesage_source(comment_path, bug_id, reported_at)
+        print(render(analyse(args.repo, bug, config)))
+        return 0
 
     if args.eval:
         return run_eval(args.repo, manifest, config)

@@ -14,14 +14,26 @@ _STOPWORDS = {
     "user", "users", "issue", "bug", "regression", "during", "shown", "show",
     "displayed", "missing", "button", "screen", "again", "still", "only",
     "tier", "mode", "into", "over", "under", "app", "returns", "return",
+    # Prose connectives and narration common in generated triage summaries.
+    "where", "even", "though", "therefore", "however", "because", "appears",
+    "rooted", "start", "starting", "investigation", "investigate", "determine",
+    "check", "look", "review", "whether", "being", "these", "those", "some",
+    "must", "will", "also", "than", "then", "such", "same", "here", "each",
+    "about", "could", "since", "used", "using", "made", "make", "makes",
+    "cause", "caused", "causes", "reported", "report", "expected", "actual",
+    "instead", "without", "reaching", "longer", "renders", "reports", "note",
 }
 
+# A whole triage paragraph yields dozens of tokens, which dilutes the keyword
+# score. Keep the earliest terms, since summaries lead with the symptom.
+_MAX_KEYWORDS = 12
 
-def extract_keywords(title: str, extra: tuple = ()) -> tuple:
+
+def extract_keywords(title: str, extra: tuple = (), limit: int = _MAX_KEYWORDS) -> tuple:
     words = re.findall(r"[a-zA-Z][a-zA-Z0-9]+", title.lower())
     picked = [w for w in words if len(w) >= 4 and w not in _STOPWORDS]
     merged = list(dict.fromkeys(picked + [e.lower() for e in extra]))
-    return tuple(merged)
+    return tuple(merged[:limit])
 
 
 def _recency(candidate: Candidate, reported_at: datetime, half_life_days: float) -> float:
@@ -64,7 +76,12 @@ def _score(
         )
 
     days = int((reported_at - candidate.commit.authored_at).total_seconds() // 86400)
-    reasons.append("landed %d day%s before the report" % (days, "" if days == 1 else "s"))
+    if days == 0:
+        reasons.append("landed the same day the bug was reported")
+    else:
+        reasons.append(
+            "landed %d day%s before the report" % (days, "" if days == 1 else "s")
+        )
 
     if candidate.is_rename:
         score *= 1.0 - cosmetic_penalty
