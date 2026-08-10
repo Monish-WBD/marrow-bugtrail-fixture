@@ -40,16 +40,29 @@ def run_git(repo: str, *args: str) -> str:
     return proc.stdout
 
 
+def parse_timestamp(value: str) -> datetime:
+    """Parse a git ISO timestamp.
+
+    Real histories contain both "+00:00" and "Z" offsets, and Python 3.9's
+    fromisoformat rejects the latter.
+    """
+    return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+
+
 def _parse_commit(line: str) -> Optional[Commit]:
     parts = line.split(_FIELD_SEP)
     if len(parts) < 6:
         return None
     sha, name, email, date, subject, parents = parts[:6]
+    try:
+        authored_at = parse_timestamp(date)
+    except ValueError:
+        return None
     return Commit(
         sha=sha,
         author_name=name,
         author_email=email,
-        authored_at=datetime.fromisoformat(date),
+        authored_at=authored_at,
         subject=subject,
         parents=tuple(p for p in parents.split() if p),
     )

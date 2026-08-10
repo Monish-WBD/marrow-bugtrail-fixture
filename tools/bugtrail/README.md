@@ -134,19 +134,23 @@ Both outcomes together are what confirms the attribution: the behaviour changed 
 
 Needs only `swiftc`, no Xcode project or test target. The Kotlin case is verified by inspection, since this fixture has no Gradle setup.
 
-### Behaviour on a real monorepo
+### Deriving ground truth from history
 
-Run read-only against a production iOS repository (~20k commits), seeded from a triage comment naming a real file:
+`mine_szz.py` builds a bug manifest from git history alone — no issue tracker, no API, no credentials:
 
-| Check | Result |
-| --- | --- |
-| Runtime, seed file only | 0.4 s |
-| Runtime, with module expansion, 40 commits/file | 4.4 s |
-| Squash-merge PR resolution | correct on real PRs |
-| CODEOWNERS resolution | resolved a real team, and **flagged that it disagreed** with the triage comment's suggested team |
-| Generated sources | seed file carrying `GENERATED CODE DO NOT MODIFY` was excluded, and the tool reported **no suspect** rather than blaming whoever ran the generator |
+```bash
+# Derive ground truth, then score against it. Both run on this repo alone.
+python3 tools/bugtrail/mine_szz.py --repo . --scan 200 --out fixtures/mined-ground-truth.json
+python3 tools/bugtrail/cli.py --eval --manifest fixtures/mined-ground-truth.json --repo .
+```
 
-That last row is the important one: the safe failure mode works on real data.
+Use `--require-ticket` on repositories whose fix commits carry ticket ids, to filter out incidental fixes.
+
+An issue tracker records which PR *fixed* a bug, never which one caused it, so attribution ground truth does not exist as a field anywhere. The Śliwerski–Zimmermann–Zeller approach recovers it from the repository: take a commit that fixed a bug, find the lines it changed, blame those lines at the fix's parent, and the commit that last wrote them is the likely cause.
+
+**This is derived ground truth, not human-verified.** Blame can land on a reformat, or on the commit that moved code rather than the one that broke it. Only single-file fixes are used, since multi-file fixes make the causing change ambiguous — which biases the sample toward simpler bugs. Any figure reported from this should carry those caveats, ideally alongside a hand-checked sample.
+
+Run on this fixture it derives only two bugs, and in both the blamed cause is the file's creation commit — an artefact of a short history where nothing else precedes the fix. So it demonstrates that the mechanism works; it is **not** an accuracy measurement. A meaningful figure needs a repository with years of history and enough single-file fixes to make the sample size worth quoting.
 
 ## Drafted tests
 

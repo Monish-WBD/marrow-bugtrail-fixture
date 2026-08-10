@@ -1,0 +1,32 @@
+{
+  "description": "Ground truth derived from git history via SZZ blame. Automatically derived, not human-verified.",
+  "derivedFrom": ".",
+  "bugs": [
+    {
+      "bugId": "FIX-f10254a",
+      "title": "Fix preroll marker propagation to overlays (#11)",
+      "seedFile": "android/player/timelinemanager/src/main/java/com/marrow/player/timelinemanager/adskip/DefaultAdSkipManager.kt",
+      "reportedAt": "2026-07-01T13:39:59+05:30",
+      "truePR": 3,
+      "trueAuthor": "Bob Sharma",
+      "derivedFrom": {
+        "fixCommit": "f10254a",
+        "causeCommit": "e1b2da8",
+        "blamedLines": 1
+      }
+    },
+    {
+      "bugId": "FIX-fb774a0",
+      "title": "fix: make marker lookup boundary inclusive",
+      "seedFile": "TASK/TASK/Modules/Player/TimelineMarkers.swift",
+      "reportedAt": "2026-06-20T11:29:59+05:30",
+      "truePR": 2,
+      "trueAuthor": "Alice Kumar",
+      "derivedFrom": {
+        "fixCommit": "fb774a0",
+        "causeCommit": "52f950e",
+        "blamedLines": 1
+      }
+    }
+  ]
+}

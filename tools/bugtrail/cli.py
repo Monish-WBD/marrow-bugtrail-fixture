@@ -29,19 +29,38 @@ def load_config(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def fixture_source(manifest_path: Path) -> list:
+    """Load a bug manifest.
+
+    Each bug may carry its own reportedAt, since mined historical bugs were
+    reported at different times. A manifest-level reportedAt is the fallback.
+    """
     data = json.loads(manifest_path.read_text())
-    reported_at = datetime.fromisoformat(data["reportedAt"].replace("Z", "+00:00"))
-    return [
-        TriageInput(
-            bug_id=bug["bugId"],
-            title=bug["title"],
-            seed_file=bug["seedFile"],
-            reported_at=reported_at,
-            platform=bug.get("platform"),
+    default_reported_at = (
+        _timestamp(data["reportedAt"]) if "reportedAt" in data else None
+    )
+
+    bugs = []
+    for bug in data["bugs"]:
+        raw = bug.get("reportedAt")
+        reported_at = _timestamp(raw) if raw else default_reported_at
+        if reported_at is None:
+            raise ValueError("%s has no reportedAt" % bug["bugId"])
+        bugs.append(
+            TriageInput(
+                bug_id=bug["bugId"],
+                title=bug["title"],
+                seed_file=bug["seedFile"],
+                reported_at=reported_at,
+                platform=bug.get("platform"),
+                display_title=bug.get("title"),
+            )
         )
-        for bug in data["bugs"]
-    ]
+    return bugs
 
 
 def codesage_source(
@@ -200,13 +219,18 @@ def run_eval(repo: str, manifest_path: Path, config: dict) -> int:
         rows.append((bug.bug_id, expected, predicted, at_1, at_3, result.confidence))
 
     total = len(bugs)
-    print("%-10s%-10s%-22s%-6s%-6s%s" % ("bug", "expected", "predicted", "P@1", "P@3", "conf"))
-    print("-" * 66)
+    width = max([len(r[0]) for r in rows] + [8]) + 2
+    header = "%-*s%-10s%-22s%-6s%-6s%s" % (
+        width, "bug", "expected", "predicted", "P@1", "P@3", "conf"
+    )
+    print(header)
+    print("-" * len(header))
     for bug_id, expected, predicted, at_1, at_3, conf in rows:
         pred_str = ", ".join(str(p) for p in predicted) or "-"
         print(
-            "%-10s#%-9d%-22s%-6s%-6s%.2f"
+            "%-*s#%-9d%-22s%-6s%-6s%.2f"
             % (
+                width,
                 bug_id,
                 expected,
                 pred_str,
@@ -215,7 +239,7 @@ def run_eval(repo: str, manifest_path: Path, config: dict) -> int:
                 conf,
             )
         )
-    print("-" * 66)
+    print("-" * len(header))
     print("precision@1: %d/%d (%.0f%%)" % (hits_at_1, total, 100.0 * hits_at_1 / total))
     print("precision@3: %d/%d (%.0f%%)" % (hits_at_3, total, 100.0 * hits_at_3 / total))
     return 0 if hits_at_1 == total else 1

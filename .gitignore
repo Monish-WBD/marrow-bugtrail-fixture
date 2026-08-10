@@ -4,3 +4,4 @@ xcuserdata/
 # Local-only test fixtures. Never commit CodeSage-format samples to a public repo.
 fixtures/codesage/
 .build/
+fixtures/real-*.json
