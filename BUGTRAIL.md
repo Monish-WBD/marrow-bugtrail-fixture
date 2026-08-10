@@ -417,6 +417,7 @@ Real histories mix `+00:00` and `Z` offsets. Python 3.9's `fromisoformat` reject
 .
 ├── demo.sh                              # ← the 3-second end-to-end demo
 ├── BUGTRAIL.md                          # ← this document
+├── docs/BUGTRAIL.pdf                    # ← this document, printable
 │
 ├── .cursor/skills/bugtrail/
 │   └── SKILL.md                         # Cursor skill wrapping the workflow
@@ -443,7 +444,14 @@ Real histories mix `+00:00` and `Z` offsets. Python 3.9's `fromisoformat` reject
 │   ├── ground-truth.json                # answer key for the seeded bugs
 │   └── triage/SYN-00{1,2,3}.txt         # synthetic CodeSage comments
 │
+├── tools/docs/md2pdf.py     (330)       # renders this document to PDF
 └── tools/seed_fixture.sh                # regenerates the adversarial history
+```
+
+Regenerate the PDF after editing this file:
+
+```bash
+python3 tools/docs/md2pdf.py BUGTRAIL.md docs/BUGTRAIL.pdf
 ```
 
 **~1,930 lines of Python**, standard library only.
