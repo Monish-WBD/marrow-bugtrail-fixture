@@ -58,6 +58,11 @@ def _parse_commit(line: str) -> Optional[Commit]:
 def commits_for_path(repo: str, path: str, limit: int = 60) -> list:
     """History of a single path, following renames.
 
+    Returns (commit, path_at_that_commit) pairs. The historical path matters:
+    a commit made before a rename does not contain today's filename, so
+    diffing it against the current path yields nothing and the change would
+    wrongly look empty.
+
     --follow accepts only one pathspec, which is why this is per-file.
     """
     fmt = _FIELD_SEP.join(["%H", "%an", "%ae", "%ad", "%s", "%P"])
@@ -68,14 +73,34 @@ def commits_for_path(repo: str, path: str, limit: int = 60) -> list:
             "--follow",
             "--date=iso-strict",
             "--format=%s" % fmt,
+            "--name-status",
             "-%d" % limit,
             "--",
             path,
         )
     except GitError:
         return []
-    parsed = (_parse_commit(ln) for ln in out.splitlines() if ln)
-    return [c for c in parsed if c]
+
+    pairs = []
+    current = None
+    for line in out.splitlines():
+        if _FIELD_SEP in line:
+            commit = _parse_commit(line)
+            if commit:
+                current = commit
+                pairs.append([commit, path])
+            continue
+        if current is None or "\t" not in line:
+            continue
+        parts = line.split("\t")
+        status = parts[0]
+        # A rename reports both names; the second is the path at this commit.
+        historical = parts[2] if status.startswith(("R", "C")) and len(parts) >= 3 else parts[1]
+        if pairs and pairs[-1][0] is current:
+            pairs[-1][1] = historical
+            current = None
+
+    return [(c, p) for c, p in pairs]
 
 
 def module_files(repo: str, seed_path: str) -> list:
@@ -238,7 +263,7 @@ def build_candidates(
             excluded.append("%s: generated source, not attributable" % path)
             continue
 
-        for commit in commits_for_path(repo, path, limit=limit):
+        for commit, historical_path in commits_for_path(repo, path, limit=limit):
             key = (commit.sha, path)
             if key in seen:
                 continue
@@ -261,7 +286,7 @@ def build_candidates(
                 continue
 
             lines_changed, substantive, hits, is_rename = diff_analysis(
-                repo, commit.sha, path, keywords
+                repo, commit.sha, historical_path, keywords
             )
             candidates.append(
                 Candidate(
