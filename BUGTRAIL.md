@@ -2,7 +2,7 @@
 
 > A bug report goes in. A named pull request, its author, the suspect diff, the owning team, and a **proven** failing regression test come out.
 
-**Repository:** `Monish-WBD/marrow-bugtrail-fixture` (private)
+**Repository:** `Monish-WBD/marrow-bugtrail-fixture` (public)
 **Stack:** Python 3.9+ standard library only, plus `git`. No dependencies, no network, no credentials.
 
 ---
@@ -567,7 +567,7 @@ Behind the Cursor skill, gated on human review. Never auto-commit a generated te
 | Secrets in the approved vault | ❌ | Not env files, never in prompts |
 | Audit trail | ❌ | Log what was read, what was decided, what was posted |
 | No unvetted dependencies | ✅ | Standard library only |
-| Nothing internal in public repos | ✅ | Repository is private; `fixtures/codesage/` is gitignored |
+| Nothing internal in public repos | ⚠️ | Repository is **public**. Every fixture is synthetic and `fixtures/codesage/` is gitignored, but this document does describe CodeSage's behaviour and comment format — worth a review before wider circulation |
 | Human review before code lands | ✅ | Drafted tests are proposals, never committed |
 
 ### 11.2 Reliability
