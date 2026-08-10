@@ -238,9 +238,23 @@ def main() -> int:
         "--report", action="store_true", help="render the full attribution report"
     )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    parser.add_argument(
+        "--history-limit",
+        type=int,
+        help="commits to inspect per file; lower this on large repositories",
+    )
+    parser.add_argument(
+        "--no-module-expansion",
+        action="store_true",
+        help="consider only the seed file, not its module siblings",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
+    if args.history_limit:
+        config["historyLimit"] = args.history_limit
+    if args.no_module_expansion:
+        config["expandToModule"] = False
     manifest = Path(args.manifest)
 
     if args.comment:

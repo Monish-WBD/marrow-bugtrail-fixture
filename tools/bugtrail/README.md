@@ -62,7 +62,21 @@ python3 tools/bugtrail/cli.py --comment fixtures/triage/SYN-001.txt --json
 
 # Tests
 python3 -m unittest discover -s tools/bugtrail/tests
+
+# Confirm a drafted regression test isolates the suspect commit
+tools/bugtrail/verify/verify.sh
 ```
+
+On a large repository, bound the search or PR resolution walks too much history:
+
+```bash
+python3 tools/bugtrail/cli.py --comment <file> --repo <path> \
+  --history-limit 12 --no-module-expansion --reported-at 2026-07-02T04:00:00Z
+```
+
+### As a Cursor skill
+
+`.cursor/skills/bugtrail/SKILL.md` wraps this workflow so the agent runs the engine, fills the drafted test's assertion, verifies it fails for the right reason, and composes the report. The skill is explicit about the split: the engine decides *which PR*, the agent handles only the judgement calls, and it must never re-rank suspects from intuition.
 
 Useful flags: `--repo` to point at a different clone, `--config` for alternative tuning, `--manifest` to score against a different bug set, `--reported-at` to override the report timestamp.
 
@@ -99,6 +113,40 @@ Plus 15 unit tests covering the parser, ADF flattening, and every ranking rule.
 The real number requires historical bugs whose fix PR is already known. `--manifest` accepts any file in the shape of `fixtures/ground-truth.json`, so pointing it at a set of real closed bugs produces a defensible precision figure without touching the engine.
 
 The fixture deliberately includes traps, so a naive implementation fails: a comment-only change to the same file the day after the real culprit; a rename; a revert; a bot commit; a generated file; a hotfix pushed straight to main with no PR; and a culprit that predates a rename and is unreachable without `--follow`.
+
+### Attribution is mechanically confirmed, not asserted
+
+A regression test that passes proves nothing. `tools/bugtrail/verify/verify.sh` compiles the same assertion against two revisions and compares:
+
+```
+at HEAD (bug present, expect FAIL)
+  FAIL  a skippable preroll was reported as not skippable
+  => as expected: the test catches the bug
+
+at 5ccb5dc^ (before the suspect PR, expect PASS)
+  PASS  a skippable preroll remains skippable on the ad-free tier
+  => as expected: the behaviour was intact here
+
+CONFIRMED: behaviour changed at the suspect commit. Attribution holds.
+```
+
+Both outcomes together are what confirms the attribution: the behaviour changed *at that commit* and nowhere else. If the assertion fails at both revisions, the assertion is wrong rather than the code — and the script says so.
+
+Needs only `swiftc`, no Xcode project or test target. The Kotlin case is verified by inspection, since this fixture has no Gradle setup.
+
+### Behaviour on a real monorepo
+
+Run read-only against a production iOS repository (~20k commits), seeded from a triage comment naming a real file:
+
+| Check | Result |
+| --- | --- |
+| Runtime, seed file only | 0.4 s |
+| Runtime, with module expansion, 40 commits/file | 4.4 s |
+| Squash-merge PR resolution | correct on real PRs |
+| CODEOWNERS resolution | resolved a real team, and **flagged that it disagreed** with the triage comment's suggested team |
+| Generated sources | seed file carrying `GENERATED CODE DO NOT MODIFY` was excluded, and the tool reported **no suspect** rather than blaming whoever ran the generator |
+
+That last row is the important one: the safe failure mode works on real data.
 
 ## Drafted tests
 
