@@ -212,6 +212,78 @@ def diff_analysis(repo: str, sha: str, path: str, keywords: Iterable) -> tuple:
     return len(changed), bool(code_lines), hits, False
 
 
+def diff_hunk(repo: str, sha: str, path: str, max_lines: int = 12) -> list:
+    """The changed lines of a commit, prefixed, for display in the report."""
+    try:
+        out = run_git(repo, "show", "--format=", "--unified=1", sha, "--", path)
+    except GitError:
+        return []
+    lines = []
+    for ln in out.splitlines():
+        if ln.startswith(("+++", "---", "diff ", "index ", "new file", "deleted file")):
+            continue
+        if ln.startswith(("@@", "+", "-", " ")):
+            lines.append(ln)
+        if len(lines) >= max_lines:
+            lines.append("... (truncated)")
+            break
+    return lines
+
+
+def merge_strategy(commit: Commit) -> str:
+    if _SQUASH_PR.search(commit.subject):
+        return "squash merge"
+    if _MERGE_PR.match(commit.subject):
+        return "merge commit"
+    return "merge commit"
+
+
+_DECLARATION = re.compile(r"\b(?:func|fun|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def changed_symbols(repo: str, sha: str, path: str) -> list:
+    """Function names a commit touched.
+
+    Declarations in the diff are the easy case. More often a change sits inside
+    an existing function body and no declaration appears at all, so fall back to
+    the enclosing function found by scanning upward from the hunk's start line.
+    """
+    found = []
+    for line in _changed_lines(repo, sha, path):
+        for name in _DECLARATION.findall(line):
+            if name not in found:
+                found.append(name)
+    if found:
+        return found
+
+    return _enclosing_symbols(repo, sha, path)
+
+
+def _enclosing_symbols(repo: str, sha: str, path: str) -> list:
+    try:
+        diff = run_git(repo, "show", "--format=", "--unified=0", sha, "--", path)
+        blob = run_git(repo, "show", "%s:%s" % (sha, path))
+    except GitError:
+        return []
+
+    lines = blob.splitlines()
+    found = []
+    for header in diff.splitlines():
+        m = _HUNK_HEADER.match(header)
+        if not m:
+            continue
+        start = int(m.group(1))
+        for idx in range(min(start, len(lines)) - 1, -1, -1):
+            match = _DECLARATION.search(lines[idx])
+            if match:
+                name = match.group(1)
+                if name not in found:
+                    found.append(name)
+                break
+    return found
+
+
 def is_generated(repo: str, path: str, globs: list, markers: list) -> bool:
     if any(fnmatch(path, g) for g in globs):
         return True

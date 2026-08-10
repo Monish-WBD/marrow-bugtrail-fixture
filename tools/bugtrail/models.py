@@ -62,6 +62,11 @@ class TriageInput:
     reported_at: datetime
     platform: Optional[str] = None
     keywords: tuple = ()
+    # The originating CodeSage triage, when the seed came from one.
+    triage: object = None
+    # Jira's issue summary. Absent from CodeSage comments, so it is supplied
+    # separately and falls back to the first sentence of the triage summary.
+    display_title: Optional[str] = None
 
 
 @dataclass

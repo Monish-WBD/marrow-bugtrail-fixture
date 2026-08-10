@@ -19,6 +19,7 @@ from archaeology import build_candidates
 from codesage import parse_comment
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
+from report import render_report
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
@@ -44,7 +45,10 @@ def fixture_source(manifest_path: Path) -> list:
 
 
 def codesage_source(
-    comment_path: Path, bug_id: str, reported_at: datetime
+    comment_path: Path,
+    bug_id: str,
+    reported_at: datetime,
+    title: str = None,
 ) -> TriageInput:
     """Build a seed from a CodeSage comment on disk.
 
@@ -58,12 +62,19 @@ def codesage_source(
         )
 
     # The comment carries no title, so the summary stands in for keyword mining.
+    body = triage.summary or triage.where_to_start
+    if not title:
+        first_sentence = body.split(". ")[0].strip()
+        title = first_sentence[:100] + ("..." if len(first_sentence) > 100 else "")
+
     return TriageInput(
         bug_id=bug_id,
-        title=triage.summary or triage.where_to_start,
+        title=body,
         seed_file=triage.seed_file,
         reported_at=reported_at,
         platform=triage.platform,
+        triage=triage,
+        display_title=title,
     )
 
 
@@ -194,6 +205,9 @@ def main() -> int:
         "--comment", help="path to a CodeSage comment to use as the seed"
     )
     parser.add_argument("--reported-at", help="ISO timestamp the bug was reported")
+    parser.add_argument(
+        "--report", action="store_true", help="render the full attribution report"
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -209,8 +223,16 @@ def main() -> int:
                 data["reportedAt"].replace("Z", "+00:00")
             )
         bug_id = args.bug or comment_path.stem
-        bug = codesage_source(comment_path, bug_id, reported_at)
-        print(render(analyse(args.repo, bug, config)))
+        # In production this is Jira's issue summary; here it comes from the manifest.
+        title = None
+        if manifest.is_file():
+            for entry in json.loads(manifest.read_text())["bugs"]:
+                if entry["bugId"] == bug_id:
+                    title = entry.get("title")
+                    break
+        bug = codesage_source(comment_path, bug_id, reported_at, title=title)
+        result = analyse(args.repo, bug, config)
+        print(render_report(args.repo, result) if args.report else render(result))
         return 0
 
     if args.eval:
