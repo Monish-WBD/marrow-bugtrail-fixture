@@ -15,7 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
-from jira_agent import build_jql  # noqa: E402
+from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
 from models import Candidate, Commit  # noqa: E402
 from ranking import extract_keywords, rank  # noqa: E402
 
@@ -259,6 +259,14 @@ class TestScope(unittest.TestCase):
         jql = build_jql(label="bugtrail", extra_jql="status = New OR status = Open")
         self.assertIn("(status = New OR status = Open)", jql)
         self.assertTrue(jql.startswith("labels = bugtrail AND ("))
+
+    def test_bug_only_needs_no_narrowing(self):
+        self.assertTrue(is_scope_narrow_enough("Bug", "", ""))
+
+    def test_subtask_requires_a_story_or_label(self):
+        self.assertFalse(is_scope_narrow_enough("Bug,Sub-task", "", ""))
+        self.assertTrue(is_scope_narrow_enough("Bug,Sub-task", "", "PLAY-126471"))
+        self.assertTrue(is_scope_narrow_enough("Bug,Sub-task", "bugtrail", ""))
 
     def test_age_floor_is_applied(self):
         self.assertIn("created >= -7d", build_jql(label="x", since_days=7))

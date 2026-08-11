@@ -32,6 +32,11 @@ cannot write to a real ticket.
     # narrower scopes, if a team wants them
     ... --label bugtrail --project PLAY
     ... --parent PLAY-126471
+
+Sub-tasks are accepted only alongside a story or a label, because a Sub-task is
+usually planned work rather than a defect:
+
+    ... --parent PLAY-126471 --issue-types "Bug,Sub-task"
 """
 
 from __future__ import annotations
@@ -163,6 +168,14 @@ def build_jql(
     return " AND ".join(clauses) + " ORDER BY created DESC"
 
 
+def is_scope_narrow_enough(issue_types: str, label: str, parent: str) -> bool:
+    """Broader types demand a narrower scope. See the caller for why."""
+    types = {t.strip().lower() for t in issue_types.split(",") if t.strip()}
+    if types <= {"bug"}:
+        return True
+    return bool(label or parent)
+
+
 def find_bugs(jira: Jira, jql: str):
     print("[jql] %s" % jql)
     return jira.search(
@@ -254,6 +267,17 @@ def main() -> int:
     if not (args.label or args.parent or args.jql):
         print(
             "refusing to run unscoped: pass --label, --parent or --jql",
+            file=sys.stderr,
+        )
+        return 2
+
+    # "Bug" is self-limiting: a Bug is a defect wherever it lives. Sub-task is
+    # not - most sub-tasks are ordinary work items, so accepting them site-wide
+    # would mean commenting on planned work. Pin them to a story or a label.
+    if not is_scope_narrow_enough(args.issue_types, args.label, args.parent):
+        print(
+            "refusing to accept types beyond Bug without --parent or --label: %s"
+            % args.issue_types,
             file=sys.stderr,
         )
         return 2
