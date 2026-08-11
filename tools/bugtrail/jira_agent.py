@@ -34,9 +34,10 @@ cannot write to a real ticket.
     ... --parent PLAY-126471
 
 Sub-tasks are accepted only alongside a story or a label, because a Sub-task is
-usually planned work rather than a defect:
+usually planned work rather than a defect. The hackathon files its demo bugs
+that way, since a Bug cannot be created under a Story in PLAY:
 
-    ... --parent PLAY-126471 --issue-types "Bug,Sub-task"
+    ... --parent PLAY-126471 --issue-types "Sub-task"
 """
 
 from __future__ import annotations

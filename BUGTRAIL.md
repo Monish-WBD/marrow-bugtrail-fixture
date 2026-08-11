@@ -501,14 +501,16 @@ That is exactly what `jira_agent.py --label bugtrail` builds. Three properties m
 - **Bugs only.** Attribution is meaningless for a Story or a Task — they describe work to do, so no past change "caused" them. The type filter is applied in the JQL and re-checked per issue, because `--jql` is caller-supplied and a comment on the wrong ticket cannot be taken back.
 - **An age floor.** Without `created >= -30d`, one label typo on an old ticket drags the back catalogue into scope on the first run.
 
-**Hackathon scope.** During the hackathon everything hangs off one story, PLAY-126471:
+**Hackathon scope.** During the hackathon every demo bug is filed as a Sub-task of one story, PLAY-126471:
 
 ```bash
 python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 \
-    --issue-types "Bug,Sub-task" --post --once
+    --issue-types "Sub-task" --post --once
 ```
 
-Sub-tasks are included because PLAY only allows a Sub-task to be created directly under a Story — a Bug sits at the same hierarchy level as a Story, and its create screen additionally requires an Epic and a Team. Filing demo bugs as Sub-tasks avoids all of that. The agent refuses to accept Sub-tasks unless `--parent` or `--label` is also given: a Bug is a defect wherever it lives, but most sub-tasks are ordinary planned work, so accepting them project-wide would mean commenting on work that was never broken.
+Sub-tasks rather than Bugs, because PLAY only allows a Sub-task to be created directly under a Story — a Bug sits at the same hierarchy level as a Story, and its create screen additionally requires an Epic and a Team. Filing demo bugs as Sub-tasks avoids all of that, and a reporter can raise one in seconds.
+
+The agent refuses to accept Sub-tasks unless `--parent` or `--label` is also given. A Bug is a defect wherever it lives, but most sub-tasks are ordinary planned work, so accepting them project-wide would mean commenting on work that was never broken. Pinning them to one story keeps that safe. **Production stays `Bug` only** — this widening exists solely because the hackathon has to file demo tickets inside a live project.
 
 | Option | Infrastructure | Admin rights | Notes |
 | --- | --- | --- | --- |
