@@ -57,7 +57,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from cli import analyse, jira_source, load_config  # noqa: E402
-from jira_bot import github_base, is_our_comment, render_comment  # noqa: E402
+from jira_bot import (  # noqa: E402
+    github_base,
+    is_inconclusive,
+    is_our_comment,
+    render_comment,
+    render_inconclusive,
+)
 from repo import ensure_repo, resolve_ref  # noqa: E402
 
 
@@ -134,12 +140,18 @@ class Jira:
         return self._call("GET", "/rest/api/2/myself")
 
 
-def existing_comment_id(jira: Jira, key: str):
-    """Our own previous comment, so a re-run updates rather than duplicates."""
+def existing_comment(jira: Jira, key: str):
+    """Our own previous comment, so a re-run updates rather than duplicates.
+
+    Returns the id and whether it was a "could not attribute" note, because the
+    two are treated differently: a real answer is left alone, while a note is
+    provisional and gets overwritten as soon as one run can do better.
+    """
     for c in jira.comments(key):
-        if is_our_comment(c.get("body") or ""):
-            return c.get("id")
-    return None
+        body = c.get("body") or ""
+        if is_our_comment(body):
+            return c.get("id"), is_inconclusive(body)
+    return None, False
 
 
 def build_jql(
@@ -199,6 +211,34 @@ def find_bugs(jira: Jira, jql: str):
     )
 
 
+def say_nothing_found(
+    jira: Jira, key: str, comment_id, provisional: bool, args, reason: str, detail: str
+) -> str:
+    """Report a dead end on the ticket instead of exiting quietly.
+
+    Silence is the worst of the three outcomes. A reporter who gets an answer is
+    served and one who gets a note knows to triage by hand, but one who gets
+    nothing has to guess whether the agent is broken, out of scope, or simply
+    had nothing to say - and the usual conclusion is that it is broken.
+    """
+    if not args.post:
+        return "shadow mode: %s" % reason
+
+    body = render_inconclusive(key, reason, detail)
+
+    if comment_id:
+        # Only ever replaces one of our own notes. Overwriting a real
+        # attribution with "found nothing" would destroy the better answer if a
+        # later run degraded - a fetch failure, say.
+        if not provisional:
+            return "kept existing answer: %s" % reason
+        jira.update_comment(key, comment_id, body)
+        return "updated note: %s" % reason
+
+    jira.add_comment(key, body)
+    return "noted: %s" % reason
+
+
 def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
     key = issue["key"]
     fields = issue.get("fields") or {}
@@ -210,8 +250,8 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
     if allowed and kind not in allowed:
         return "skipped: issue type %r not in %s" % (kind, allowed)
 
-    comment_id = existing_comment_id(jira, key)
-    if comment_id and not args.update:
+    comment_id, provisional = existing_comment(jira, key)
+    if comment_id and not args.update and not provisional:
         return "already commented"
 
     scratch = Path(args.state_dir) / "_issue.json"
@@ -225,11 +265,25 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
 
     bug, ranked = jira_source(scratch, repo, config)
     if bug is None:
-        return "no candidate file located"
+        return say_nothing_found(
+            jira, key, comment_id, provisional, args,
+            "no candidate file located",
+            "Nothing in the summary or description matched a file in the "
+            "repository. Quoting the exact log line, error text or file name "
+            "usually resolves this - the search is over the code itself, so it "
+            "needs a term that appears in it.",
+        )
 
     result = analyse(repo, bug, config)
     if not result.suspects or result.confidence < args.min_confidence:
-        return "confidence %.2f below %.2f" % (result.confidence, args.min_confidence)
+        return say_nothing_found(
+            jira, key, comment_id, provisional, args,
+            "confidence %.2f, below the %.2f threshold"
+            % (result.confidence, args.min_confidence),
+            "The starting point looks like {{%s}}, but no change to it stood "
+            "out clearly enough to name one. Worth a look by hand."
+            % bug.seed_file,
+        )
 
     body = render_comment(result, ranked, repo, base)
 

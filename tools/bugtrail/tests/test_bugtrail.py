@@ -7,6 +7,7 @@ and the tool quietly posting nothing.
 
 import argparse
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -24,7 +25,14 @@ sys.path.insert(0, str(HERE.parent))
 import jira_webhook  # noqa: E402
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
 from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
-from jira_bot import LEGACY_MARKERS, MARKER, is_our_comment  # noqa: E402
+from jira_bot import (  # noqa: E402
+    LEGACY_MARKERS,
+    MARKER,
+    is_inconclusive,
+    is_our_comment,
+    render_inconclusive,
+)
+from localize import localize  # noqa: E402
 from models import Candidate, Commit  # noqa: E402
 from ranking import extract_keywords, rank  # noqa: E402
 
@@ -320,6 +328,26 @@ class TestRanking(unittest.TestCase):
         self.assertFalse(is_our_comment("a human wrote this"))
         self.assertFalse(is_our_comment(""))
 
+    def test_a_dead_end_is_reported_rather_than_passed_over(self):
+        """Silence cannot be told apart from a broken agent."""
+        body = render_inconclusive("PLAY-1", "no candidate file located", "detail")
+        self.assertIn("no suspect found", body)
+        self.assertIn("no candidate file located", body)
+        self.assertTrue(is_our_comment(body))
+
+    def test_a_dead_end_note_is_marked_replaceable(self):
+        """A note has to be distinguishable from an answer, or the ticket keeps
+        it for good: the missing code lands, the next run would now succeed, and
+        it skips because it recognises its own marker.
+        """
+        note = render_inconclusive("PLAY-1", "nothing matched")
+        self.assertTrue(is_inconclusive(note))
+
+        answered = "h3. suspect change ... _%s_" % MARKER
+        self.assertTrue(is_our_comment(answered))
+        self.assertFalse(is_inconclusive(answered))
+        self.assertFalse(is_inconclusive("a human wrote this"))
+
     def test_confidence_never_exceeds_one(self):
         strongest = make_candidate(days_before=0)
         _, confidence = rank([strongest], REPORTED_AT, ("marker",), CONFIG)
@@ -444,6 +472,62 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(self.post({"key": "OUT-1"}), 202)
         time.sleep(0.3)
         self.assertTrue(any("key = OUT-1" in j for j in self.seen))
+
+
+class TestLocalizerReach(unittest.TestCase):
+    """What the search can see at all.
+
+    A file the localizer never looks at is indistinguishable from a file that
+    does not match, and both surface as "no candidate located" - so these are
+    about reach rather than ranking.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.repo = cls.tmp.name
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-C", cls.repo] + list(args),
+                check=True, capture_output=True, text=True,
+            )
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test")
+        Path(cls.repo, "createNew.py").write_text('print("Hi this is Neermita")\n')
+        Path(cls.repo, "Player.swift").write_text("func play() {}\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "add files")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def paths(self, text):
+        return [c.path for c in localize(text, self.repo)]
+
+    def test_python_is_searched(self):
+        """Every language absent from SOURCE_GLOBS is invisible, however well
+        the report describes it.
+        """
+        self.assertIn("createNew.py", self.paths("the Neermita log is wrong"))
+
+    def test_a_quoted_string_matches_whatever_its_case(self):
+        """Prose terms are lowercased before searching, so a case-sensitive
+        grep could only ever match lowercase code - and a reporter typing
+        "neermita" would miss the Neermita that is right there.
+        """
+        self.assertIn("createNew.py", self.paths("it prints neermita, unexpected"))
+
+    def test_content_is_searched_and_not_only_file_names(self):
+        """The commonest report of all is someone quoting a string they saw on
+        screen, and such a string is almost never part of a file name.
+        """
+        found = self.paths("the app shows Neermita on screen")
+        self.assertIn("createNew.py", found)
+        self.assertNotIn("Player.swift", found)
 
 
 if __name__ == "__main__":
