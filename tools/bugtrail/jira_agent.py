@@ -113,20 +113,37 @@ def existing_comment_id(jira: Jira, key: str):
     return None
 
 
-def find_bugs(jira: Jira, parent: str, extra_jql: str = ""):
-    jql = (
-        'parent = %s OR issue in linkedIssues("%s")' % (parent, parent)
-        if parent else extra_jql
-    )
-    if parent and extra_jql:
-        jql = "(%s) AND (%s)" % (jql, extra_jql)
-    jql += " ORDER BY created DESC"
+def find_bugs(jira: Jira, parent: str, extra_jql: str = "", issue_types=("Bug",)):
+    """Scope the search. Attribution only makes sense for defects: a Story or a
+    Task describes work to do, so there is no change that "caused" it.
+    """
+    clauses = []
+    if parent:
+        clauses.append(
+            '(parent = %s OR issue in linkedIssues("%s"))' % (parent, parent)
+        )
+    if extra_jql:
+        clauses.append("(%s)" % extra_jql)
+
+    types = [t.strip() for t in issue_types if t and t.strip()]
+    if types:
+        clauses.append("issuetype in (%s)" % ", ".join('"%s"' % t for t in types))
+
+    jql = " AND ".join(clauses) + " ORDER BY created DESC"
+    print("[jql] %s" % jql)
     return jira.search(jql, ["summary", "description", "created", "issuetype"])
 
 
 def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
     key = issue["key"]
     fields = issue.get("fields") or {}
+
+    # Checked again here rather than trusting the JQL alone: --jql is
+    # caller-supplied, and commenting on the wrong issue type is not recoverable.
+    allowed = [t.strip().lower() for t in args.issue_types.split(",") if t.strip()]
+    kind = ((fields.get("issuetype") or {}).get("name") or "").lower()
+    if allowed and kind not in allowed:
+        return "skipped: issue type %r not in %s" % (kind, allowed)
 
     comment_id = existing_comment_id(jira, key)
     if comment_id and not args.update:
@@ -166,6 +183,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--parent", help="only act on children or links of this issue")
     ap.add_argument("--jql", default="", help="extra JQL, ANDed with --parent")
+    ap.add_argument(
+        "--issue-types",
+        default="Bug",
+        help="comma-separated issue types to act on. Defaults to Bug; "
+        "attribution is meaningless for a Story or a Task",
+    )
     ap.add_argument("--repo")
     ap.add_argument("--ref")
     ap.add_argument("--config", default=str(HERE / "config.json"))
@@ -208,7 +231,9 @@ def main() -> int:
 
     while True:
         try:
-            issues = find_bugs(jira, args.parent, args.jql)
+            issues = find_bugs(
+                jira, args.parent, args.jql, args.issue_types.split(",")
+            )
             print("\n[%s] %d issue(s) in scope"
                   % (time.strftime("%H:%M:%S"), len(issues)))
             for issue in issues:
