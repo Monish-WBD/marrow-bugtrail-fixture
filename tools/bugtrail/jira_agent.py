@@ -98,11 +98,26 @@ class Jira:
         except urllib.error.URLError as e:
             raise JiraError("%s %s -> %s" % (method, path, e.reason))
 
-    def search(self, jql: str, fields, max_results: int = 50):
+    def issue(self, key: str, fields):
         return self._call(
-            "GET", "/rest/api/2/search",
-            params={"jql": jql, "fields": ",".join(fields), "maxResults": max_results},
+            "GET", "/rest/api/2/issue/%s" % key, params={"fields": ",".join(fields)}
+        )
+
+    def search(self, jql: str, fields, max_results: int = 50):
+        """Search on v3, then read each issue back on v2.
+
+        Two hops because the two APIs disagree in useful ways. v2 /search was
+        removed outright in 2025 (CHANGE-2046), so the query has to go to v3.
+        But v3 returns descriptions as Atlassian Document Format trees, while v2
+        still returns them as plain strings - and plain text is what the
+        localizer reads. Triage volumes are a handful of tickets per sweep, so
+        the extra call per issue costs nothing worth optimising.
+        """
+        found = self._call(
+            "GET", "/rest/api/3/search/jql",
+            params={"jql": jql, "fields": "key", "maxResults": max_results},
         ).get("issues", [])
+        return [self.issue(i["key"], fields) for i in found]
 
     def comments(self, key: str):
         return self._call("GET", "/rest/api/2/issue/%s/comment" % key).get("comments", [])
