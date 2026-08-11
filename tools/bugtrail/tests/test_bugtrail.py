@@ -21,6 +21,7 @@ from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
 from jira_bot import (  # noqa: E402
     BOT_NAME,
     FOOTER,
+    FOOTER_INCONCLUSIVE,
     LEGACY_MARKERS,
     MARKER,
     bot_banner,
@@ -347,8 +348,14 @@ class TestRanking(unittest.TestCase):
         earns a duplicate on the next sweep.
         """
         note = render_inconclusive("PLAY-1", "nothing matched")
-        self.assertIn(FOOTER, note)
+        self.assertIn(FOOTER_INCONCLUSIVE, note)
         self.assertTrue(is_our_comment(note))
+
+        # Both signatures have to embed the marker. They are worded
+        # differently, so nothing but this stops one of them drifting free of
+        # it and going unrecognised.
+        for signature in (FOOTER, FOOTER_INCONCLUSIVE):
+            self.assertIn(MARKER, signature)
 
         # And no leftover token on the ticket, which is the point of the change.
         self.assertNotIn("bug-slayers:v1", note)
