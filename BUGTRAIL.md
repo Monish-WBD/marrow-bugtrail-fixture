@@ -600,7 +600,7 @@ Three ways to run it, in increasing order of permanence:
 | --- | --- | --- | --- |
 | **Terminal** | `jira_agent.py ... --watch` | Poll interval | Nothing. Best for a live demo |
 | **GitHub Actions, scheduled** | `.github/workflows/bugtrail.yml` | ~15 minutes | Three repository secrets |
-| **GitHub Actions, resident** | `watch-cycle` dispatch, self-chaining | 15 seconds | Three secrets and `CHAIN_TOKEN` |
+| **GitHub Actions, on request** | `gh workflow run BugTrail -f watch_minutes=20` | 15 seconds, for the window you ask for | Three repository secrets |
 
 ```bash
 # demo: poll every 15s in the foreground, so the audience sees it happen
@@ -610,7 +610,9 @@ python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 \
 
 `--interval` implies `--watch`. It used to require both, and asking for an interval without it produced one healthy-looking sweep and a silent exit — the worst failure mode available, since a watcher that has stopped looks exactly like a watcher with nothing to do.
 
-A macOS `launchd` service used to be the unattended option. It was removed once the resident GitHub Actions watcher worked, because it was strictly worse on the thing that matters: it answered tickets only while one particular Mac was awake. It also needed the tool copied to `~/.local/share/bugtrail`, since macOS gates `~/Documents` behind per-application consent and a `launchd` job inherits none of the access your terminal was granted — pointing it at a checkout there fails with `Operation not permitted` indefinitely. Worth knowing if you ever reintroduce it; `git log -- deploy/` has the working version.
+**Why the watcher is on request rather than always up.** There was a resident version: each run polled for 55 minutes and then dispatched its own successor, giving continuous 15-second response from nothing but GitHub. It ran for a day and then stopped being given runners — one cycle sat queued for 45 minutes, and because a watcher that has stalled looks exactly like a watcher with nothing to do, the only sign was tickets being answered by the 15-minute sweep instead. Two watchers were also seen running at once: the handover step ran on `always()`, which includes cancellation, so a cycle cancelled by its own replacement still spawned a successor and each cancellation doubled the chain rather than holding it at one. Both were fixable in isolation, but the shape was wrong — Actions is a CI system, and a permanently resident job is outside what it is for. Asking for a window when you need one costs a command and removes the whole class of problem. The `CHAIN_TOKEN` secret it needed is now unused and can be revoked; `git log -- .github/workflows/bugtrail.yml` has the chaining version.
+
+A macOS `launchd` service used to be the unattended option. It was removed because it was strictly worse on the thing that matters: it answered tickets only while one particular Mac was awake. It also needed the tool copied to `~/.local/share/bugtrail`, since macOS gates `~/Documents` behind per-application consent and a `launchd` job inherits none of the access your terminal was granted — pointing it at a checkout there fails with `Operation not permitted` indefinitely. Worth knowing if you ever reintroduce it; `git log -- deploy/` has the working version.
 
 ### 10.8 Step 7 — Triggering from Jira, with nothing running locally
 
