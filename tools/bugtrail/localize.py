@@ -24,8 +24,16 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
-SOURCE_GLOBS = ("*.swift", "*.kt", "*.java", "*.m", "*.mm", "*.h", "*.tsx", "*.ts")
-SOURCE_SUFFIXES = (".swift", ".kt", ".java", ".m", ".mm", ".h", ".tsx", ".ts")
+# Only these are searched, so a language missing here is invisible: the file can
+# sit on the default branch containing the exact string from the bug report and
+# still produce "no candidate file located", which reads as "nothing matched"
+# rather than "never looked".
+SOURCE_GLOBS = (
+    "*.swift", "*.kt", "*.java", "*.m", "*.mm", "*.h", "*.tsx", "*.ts",
+    "*.py", "*.js", "*.jsx", "*.go", "*.rb", "*.cs",
+)
+SOURCE_SUFFIXES = tuple(g[1:] for g in SOURCE_GLOBS)
+_SUFFIX_RE = r"\.(%s)$" % "|".join(s[1:] for s in SOURCE_SUFFIXES)
 
 # Identifiers common enough in this domain to carry no signal.
 _STOP_IDENTIFIERS = {
@@ -42,7 +50,7 @@ _DECL = r"(?:class|struct|enum|protocol|interface|extension|object|typealias|fun
 # Prose that carries no location information. Domain nouns are deliberately
 # absent: "spinner", "seek" and "caption" are exactly the words that locate code.
 _STOP_WORDS = set("""
-about actual after again against all also always any app application are asked
+about actual added adding after again against all also always any app application are asked
 back backgrounding been before being below both build but can case check click
 close come could crash current customer device devices different does done during
 each else even every expected fail failed fails first fixed following from
@@ -126,7 +134,16 @@ def _grep(
     if not terms:
         return {}
 
-    cmd = ["git", "-C", repo, "grep", "-I", "-F", "-w", "-n", "-m", str(max_per_file)]
+    # -i because half the terms reaching here are prose, and prose_terms
+    # lowercases everything it extracts. Matching case-sensitively meant a
+    # lowercased term could only ever find lowercase code: a report saying
+    # "neermita" would not find Neermita, and the miss looked like an absent
+    # file rather than a mismatched search. The attribution loop below already
+    # compares case-insensitively, so this makes the two halves agree.
+    cmd = [
+        "git", "-C", repo, "grep", "-I", "-F", "-w", "-i", "-n",
+        "-m", str(max_per_file),
+    ]
     for t in terms:
         cmd += ["-e", t]
     cmd += [rev, "--"] + list(SOURCE_GLOBS)
@@ -157,7 +174,9 @@ def _split_path_tokens(path: str) -> Set[str]:
     ShortsPlayerControlsOverlay/ShortsPlayPauseButton.swift
       -> {shorts, player, controls, overlay, play, pause, button}
     """
-    stem = re.sub(r"\.(swift|kt|java|m|mm|h|tsx|ts)$", "", path)
+    # Derived from SOURCE_SUFFIXES so a newly indexed language cannot end up
+    # keeping its extension as a path token and matching on it.
+    stem = re.sub(_SUFFIX_RE, "", path)
     words: Set[str] = set()
     for chunk in re.split(r"[/_\-.]", stem):
         for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+", chunk):
@@ -210,6 +229,31 @@ def localize(
     hits = _grep(repo, terms, rev=rev)
 
     candidates: Dict[str, Candidate] = {}
+
+    # Evidence 0: distinctive prose words, searched in file contents.
+    #
+    # The other two signals both miss the commonest report of all - someone
+    # quoting a string they saw on screen. Identifiers only cover text shaped
+    # like code, and the path index below only covers words that appear in a
+    # file *name*, so a literal like "Neermita" sitting in the body of a file
+    # matched nothing at all and the ticket came back "no candidate located".
+    #
+    # Rare words only. A word occurring all over the repository locates
+    # nothing, and grepping it just adds noise for every file it touches.
+    prose = prose_terms(text) - {t.lower() for t in terms}
+    prose_hits = _grep(repo, sorted(prose), rev=rev)
+    prose_total = sum(len(v) for v in prose_hits.values()) or 1
+    for term, paths in prose_hits.items():
+        df = len(paths)
+        if df == 0 or df > max(3, prose_total // 4):
+            continue
+        # Scaled below an identifier match on purpose: an English word appearing
+        # in a file is weaker evidence than a symbol quoted from it.
+        weight = 0.6 * math.log(1 + prose_total / df)
+        for path in paths:
+            c = candidates.setdefault(path, Candidate(path=path))
+            c.score += weight
+            c.reasons.append("contains `%s`" % term)
 
     # Evidence 1: literal identifiers quoted from the code. High precision, but
     # only about a third of real reports contain any.
