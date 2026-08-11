@@ -516,7 +516,7 @@ The agent refuses to accept Sub-tasks unless `--parent` or `--label` is also giv
 | --- | --- | --- | --- |
 | JQL poller | A machine of yours, awake | None | Idempotent; a missed tick is picked up on the next one |
 | **Automation → GitHub Actions** ✅ | None of ours | Project admin | Fires on creation; GitHub supplies the compute — §10.8 |
-| Automation → self-hosted webhook | A reachable HTTPS endpoint | Project admin | Fastest, but something must keep it up |
+| **Resident GitHub Actions watcher** ✅ | None of ours | None | 15s response with no admin rights at all — §10.8 |
 
 > **Automation and the script are not alternatives.** A Jira Automation rule cannot clone a repository or walk git history; all it can do is fire a *Send web request*. So Automation is always the trigger and never the worker. What it can call, though, is GitHub's own API: a `repository_dispatch` starts a workflow that does the work on GitHub's runners, so "a reachable endpoint" stops meaning "a server we operate". That is the deployed shape — see §10.8. The poller remains useful as a demo and as a backstop, and the scoping and comment logic are identical either way.
 
@@ -594,28 +594,23 @@ EOF
 chmod 600 ~/.config/bugtrail/env
 ```
 
-Four ways to run it, in increasing order of permanence:
+Three ways to run it, in increasing order of permanence:
 
 | | How | Latency | Needs |
 | --- | --- | --- | --- |
 | **Terminal** | `jira_agent.py ... --watch` | Poll interval | Nothing. Best for a live demo |
-| **launchd** | `deploy/install-agent.sh` | 15 seconds | A Mac that stays awake |
 | **GitHub Actions, scheduled** | `.github/workflows/bugtrail.yml` | ~15 minutes | Three repository secrets |
-| **Jira → GitHub Actions** | Automation rule + `repository_dispatch` | ~30 seconds | A GitHub token, project admin |
+| **GitHub Actions, resident** | `watch-cycle` dispatch, self-chaining | 15 seconds | Three secrets and `CHAIN_TOKEN` |
 
 ```bash
 # demo: poll every 15s in the foreground, so the audience sees it happen
 python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 \
     --issue-types "Sub-task" --post --interval 15
-
-# unattended on a Mac
-deploy/install-agent.sh
-tail -f ~/.cache/bugtrail/logs/agent.log
 ```
 
 `--interval` implies `--watch`. It used to require both, and asking for an interval without it produced one healthy-looking sweep and a silent exit — the worst failure mode available, since a watcher that has stopped looks exactly like a watcher with nothing to do.
 
-The launchd job runs a **copy** of the tool in `~/.local/share/bugtrail`, placed there by the installer. macOS gates `~/Documents`, `~/Desktop` and `~/Downloads` behind per-application consent, and a launchd job inherits none of the access your terminal was granted: point it at a checkout in `~/Documents` and it fails with `Operation not permitted` forever. Copying out is preferable to granting Full Disk Access to `/bin/bash`. Re-run the installer after changing code.
+A macOS `launchd` service used to be the unattended option. It was removed once the resident GitHub Actions watcher worked, because it was strictly worse on the thing that matters: it answered tickets only while one particular Mac was awake. It also needed the tool copied to `~/.local/share/bugtrail`, since macOS gates `~/Documents` behind per-application consent and a `launchd` job inherits none of the access your terminal was granted — pointing it at a checkout there fails with `Operation not permitted` indefinitely. Worth knowing if you ever reintroduce it; `git log -- deploy/` has the working version.
 
 ### 10.8 Step 7 — Triggering from Jira, with nothing running locally
 
@@ -649,27 +644,7 @@ The 15-minute schedule stays enabled underneath as a backstop, covering a disabl
 
 The scheduled options run `--once` per tick rather than looping. A crashed loop stays dead until somebody notices; a scheduler just runs again on the next tick.
 
-**Self-hosting the receiver instead.** The dispatch route above needs no server of ours at all, which is usually the right trade. If you would rather Jira called our code directly — no GitHub in the path, and single-digit-second latency — `jira_webhook.py` is that receiver, at the cost of an endpoint someone has to keep running:
-
-```bash
-export BUGTRAIL_WEBHOOK_SECRET=$(python3 -c "import secrets;print(secrets.token_urlsafe(32))")
-python3 tools/bugtrail/jira_webhook.py --parent PLAY-126471 \
-    --issue-types "Sub-task" --post
-cloudflared tunnel --url http://localhost:8787      # Jira must be able to reach it
-```
-
-Then in **Project settings → Automation → Create rule**:
-
-| Field | Value |
-| --- | --- |
-| When | Work item created |
-| If | Issue Type equals Sub-task, parent = PLAY-126471 |
-| Then | Send web request |
-| URL | `https://<your-tunnel>/jira` |
-| Headers | `X-BugTrail-Token: <the secret>` |
-| Body | custom data — `{"key": "{{issue.key}}"}` |
-
-The rule sends nothing but the issue key. Summary, type and parent are read back from Jira with our own credentials, because a request arriving over the internet is not evidence about what a ticket contains. Holding the secret proves the caller is our rule; it does not prove the ticket is one we agreed to comment on, so the handler re-checks the issue against the same JQL scope the poller uses and declines anything outside it.
+**Self-hosting the receiver instead.** A `jira_webhook.py` existed for the case where you would rather Jira called our code directly — no GitHub in the path, single-digit-second latency. It was removed rather than kept as an option, because it was never deployed: it needs a public HTTPS endpoint that somebody keeps running, and the dispatch route above gets within seconds of the same latency while requiring no server of ours at all. Keeping two receivers meant two authentication paths to reason about for one behaviour. `git log -- tools/bugtrail/jira_webhook.py` has it if the trade ever changes.
 
 This is the one option that needs **project admin rights** to configure, and a URL Jira can reach. A tunnel is fine for a demo; production would host the same script behind a real endpoint.
 

@@ -5,24 +5,17 @@ changes, these tests fail loudly rather than the parser silently returning None
 and the tool quietly posting nothing.
 """
 
-import argparse
 import json
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 import unittest
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-import jira_webhook  # noqa: E402
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
 from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
 from jira_bot import (  # noqa: E402
@@ -395,83 +388,6 @@ class TestScope(unittest.TestCase):
     def test_age_floor_is_applied(self):
         self.assertIn("created >= -7d", build_jql(label="x", since_days=7))
         self.assertNotIn("created >=", build_jql(label="x", since_days=0))
-
-
-class TestWebhook(unittest.TestCase):
-    """The webhook is reachable from the internet, so its refusals matter more
-    than its successes.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls.seen = []
-
-        class FakeJira:
-            def search(inner, jql, fields, max_results=50):
-                cls.seen.append(jql)
-                if "OUT-1" in jql:
-                    return []
-                return [{
-                    "key": "IN-1",
-                    "fields": {
-                        "summary": "s", "description": "d",
-                        "created": "2026-08-11T09:48:10.963+0000",
-                        "issuetype": {"name": "Sub-task"},
-                    },
-                }]
-
-        cls._real_process = jira_webhook.process
-        jira_webhook.process = lambda *a, **k: "processed"
-
-        args = argparse.Namespace(
-            parent="PLAY-126471", label="", issue_types="Sub-task",
-            update=False, min_confidence=0.25, post=False,
-            state_dir=tempfile.mkdtemp(),
-        )
-        jira_webhook.Handler.context = {
-            "jira": FakeJira(), "repo": ".", "config": {}, "base": "",
-            "args": args, "secret": "s3cret",
-        }
-        # Port 0: the OS picks a free one, so parallel runs cannot collide.
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), jira_webhook.Handler)
-        cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
-        jira_webhook.process = cls._real_process
-
-    def post(self, body, token="s3cret", path="/jira"):
-        req = urllib.request.Request(
-            "http://127.0.0.1:%d%s" % (self.port, path),
-            data=json.dumps(body).encode(), method="POST",
-        )
-        if token is not None:
-            req.add_header("X-BugTrail-Token", token)
-        try:
-            with urllib.request.urlopen(req, timeout=5) as r:
-                return r.status
-        except urllib.error.HTTPError as e:
-            return e.code
-
-    def test_rejects_wrong_and_missing_token(self):
-        self.assertEqual(self.post({"key": "IN-1"}, token="wrong"), 401)
-        self.assertEqual(self.post({"key": "IN-1"}, token=None), 401)
-
-    def test_rejects_unknown_path_and_empty_key(self):
-        self.assertEqual(self.post({"key": "IN-1"}, path="/elsewhere"), 404)
-        self.assertEqual(self.post({}), 400)
-
-    def test_accepts_a_scoped_issue(self):
-        self.assertEqual(self.post({"key": "IN-1"}), 202)
-
-    def test_holding_the_secret_does_not_widen_scope(self):
-        # Answered 202 because the work is asynchronous; the scope check then
-        # declines it, which is visible in the JQL rather than the status code.
-        self.assertEqual(self.post({"key": "OUT-1"}), 202)
-        time.sleep(0.3)
-        self.assertTrue(any("key = OUT-1" in j for j in self.seen))
 
 
 class TestLocalizerReach(unittest.TestCase):

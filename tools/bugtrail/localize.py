@@ -35,6 +35,29 @@ SOURCE_GLOBS = (
 SOURCE_SUFFIXES = tuple(g[1:] for g in SOURCE_GLOBS)
 _SUFFIX_RE = r"\.(%s)$" % "|".join(s[1:] for s in SOURCE_SUFFIXES)
 
+# Paths that describe the tooling rather than the product it examines.
+#
+# Excluded because this triage agent lives in the same repository it analyses,
+# and its own test file is the single densest collection of product vocabulary
+# anywhere in the tree: it names preroll, ad-skip, greetings and every other
+# symptom on purpose, as fixtures. Left in the corpus it wins nearly every
+# search, and an ad-skip regression gets attributed to the bot's test file
+# instead of to DefaultAdSkipManager.
+#
+# A tool blaming itself for a defect in the product is never the useful answer,
+# even when it happens to be the tool that is broken.
+EXCLUDED_PREFIXES = ("tools/bugtrail/", "tools/docs/")
+
+# Test-file conventions across the languages searched. A fix almost always lands
+# in the source file rather than in the test that covers it.
+_TEST_RE = re.compile(
+    r"(^|/)tests?/|(^|/)test_[^/]+$|_test\.[^/]+$|Tests?\.[^/]+$|\.(test|spec)\.[^/]+$"
+)
+
+
+def _is_searchable(path: str) -> bool:
+    return path.endswith(SOURCE_SUFFIXES) and not path.startswith(EXCLUDED_PREFIXES)
+
 # Identifiers common enough in this domain to carry no signal.
 _STOP_IDENTIFIERS = {
     "HBOMax", "AndroidTV", "FireTV", "AppleTV", "IOException", "JSONObject",
@@ -161,6 +184,8 @@ def _grep(
         if len(parts) < 4:
             continue
         _, path, _, content = parts
+        if not _is_searchable(path):
+            continue
         low = content.lower()
         for lt, term in lowered.items():
             if lt in low:
@@ -193,7 +218,7 @@ def _file_index(repo: str, rev: str) -> Dict[str, Set[str]]:
     index: Dict[str, Set[str]] = {}
     for path in out.split("\n"):
         path = path.strip()
-        if path.endswith(SOURCE_SUFFIXES):
+        if _is_searchable(path):
             index[path] = _split_path_tokens(path)
     return index
 
@@ -307,9 +332,12 @@ def localize(
                 "path matches %s" % ", ".join("`%s`" % t for t in sorted(shared)[:4])
             )
 
-    # A fix almost always lands in the source file, not its test.
+    # A fix almost always lands in the source file, not its test. Matched by
+    # convention across all the languages searched: checking only for Swift and
+    # Kotlin naming let every Python and TypeScript test through undamped, and a
+    # test is a vocabulary magnet because it states the symptom in words.
     for path, c in candidates.items():
-        if "/Tests/" in path or path.endswith(("Tests.swift", "Test.kt", "Tests.kt")):
+        if _TEST_RE.search(path):
             c.score *= 0.35
 
     if not candidates:

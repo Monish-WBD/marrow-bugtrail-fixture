@@ -1,6 +1,11 @@
 .DS_Store
 xcuserdata/
 
+# Compiled bytecode. It was committed once, which meant every run of the test
+# suite produced spurious diffs and stale .pyc files travelled with the repo.
+__pycache__/
+*.pyc
+
 # Local-only test fixtures. Never commit CodeSage-format samples to a public repo.
 fixtures/codesage/
 .build/
