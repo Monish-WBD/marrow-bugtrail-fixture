@@ -9,8 +9,10 @@ data class TimelineMarker(
 
 class TimelineMarkerProcessor(private val markers: List<TimelineMarker> = emptyList()) {
 
-    fun markerAt(positionMs: Long): TimelineMarker? =
-        markers.firstOrNull { positionMs >= it.startMs && positionMs < it.endMs }
+    fun markerAt(positionMs: Long): TimelineMarker? {
+        println("TimelineMarkerProcessor.markerAt called")
+        return markers.firstOrNull { positionMs >= it.startMs && positionMs < it.endMs }
+    }
 
     fun skippableMarkers(): List<TimelineMarker> = markers.filter { it.isSkippable }
 }
