@@ -26,6 +26,39 @@ CACHE_DIR = Path.home() / ".cache" / "bugtrail" / "repos"
 DEFAULT_MAX_AGE_SECONDS = 900
 
 
+def resolve_ref(repo: str, preferred: Optional[str] = None) -> str:
+    """The revision to analyse.
+
+    `git fetch` moves remote-tracking refs but never HEAD, so analysing HEAD on a
+    long-lived checkout silently reads whatever was last pulled by hand - and on
+    a developer machine that may be a feature branch. Production runs should read
+    the remote's default branch instead.
+
+    Falls back to HEAD for repositories with no usable remote, which keeps
+    offline fixture runs working.
+    """
+    def rev_ok(rev: str) -> bool:
+        return _run(["git", "rev-parse", "--verify", "--quiet", rev + "^{commit}"],
+                    cwd=Path(repo)).returncode == 0
+
+    if preferred:
+        if rev_ok(preferred):
+            return preferred
+        raise ValueError("ref %s does not exist in %s" % (preferred, repo))
+
+    head = _run(["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+                cwd=Path(repo)).stdout.strip()
+    if head:
+        candidate = head.replace("refs/remotes/", "", 1)
+        if rev_ok(candidate):
+            return candidate
+
+    for candidate in ("origin/main", "origin/master"):
+        if rev_ok(candidate):
+            return candidate
+    return "HEAD"
+
+
 def is_remote(spec: str) -> bool:
     return bool(re.match(r"^(https?://|git@|ssh://|[\w.-]+/[\w.-]+$)", spec)) and not Path(spec).exists()
 

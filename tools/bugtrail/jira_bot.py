@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE))
 
 from cli import analyse, jira_source, load_config  # noqa: E402
 from ranking import confidence_label  # noqa: E402
-from repo import ensure_repo  # noqa: E402
+from repo import ensure_repo, resolve_ref  # noqa: E402
 
 MARKER = "<!-- bugtrail:v1 -->"
 DISCLAIMER = (
@@ -108,6 +108,7 @@ def main() -> int:
         action="store_true",
         help="skip refreshing the checkout (offline reruns only)",
     )
+    ap.add_argument("--ref", help="revision to analyse; defaults to origin's default branch")
     ap.add_argument("--issues", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--config", default=str(HERE / "config.json"))
@@ -127,6 +128,8 @@ def main() -> int:
         args.repo or config.get("repo") or "",
         fetch_local=not args.no_fetch,
     )
+    config["ref"] = resolve_ref(args.repo, args.ref)
+    print("[repo] analysing %s at %s" % (args.repo, config["ref"]))
     base = github_base(args.repo)
 
     issues = json.loads(Path(args.issues).read_text())

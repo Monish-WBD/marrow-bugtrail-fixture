@@ -68,7 +68,7 @@ def _parse_commit(line: str) -> Optional[Commit]:
     )
 
 
-def commits_for_path(repo: str, path: str, limit: int = 60) -> list:
+def commits_for_path(repo: str, path: str, limit: int = 60, rev: str = "HEAD") -> list:
     """History of a single path, following renames.
 
     Returns (commit, path_at_that_commit) pairs. The historical path matters:
@@ -88,6 +88,7 @@ def commits_for_path(repo: str, path: str, limit: int = 60) -> list:
             "--format=%s" % fmt,
             "--name-status",
             "-%d" % limit,
+            rev,
             "--",
             path,
         )
@@ -116,17 +117,20 @@ def commits_for_path(repo: str, path: str, limit: int = 60) -> list:
     return [(c, p) for c, p in pairs]
 
 
-def module_files(repo: str, seed_path: str) -> list:
+def module_files(repo: str, seed_path: str, rev: str = "HEAD") -> list:
     """Sibling files in the seed file's directory, used to widen the search.
 
-    CodeSage gives a starting point rather than a verdict, so the real cause can
-    sit in a neighbouring file.
+    The starting point is a hint rather than a verdict, so the real cause can sit
+    in a neighbouring file.
+
+    Reads the tree at `rev` rather than `git ls-files`, which would report the
+    index and working tree and therefore include uncommitted local files.
     """
     parent = str(PurePosixPath(seed_path).parent)
     if parent in ("", "."):
         return []
     try:
-        out = run_git(repo, "ls-files", "--", parent)
+        out = run_git(repo, "ls-tree", "-r", "--name-only", rev, "--", parent)
     except GitError:
         return []
     return [p for p in out.splitlines() if p and p != seed_path]
@@ -297,11 +301,11 @@ def _enclosing_symbols(repo: str, sha: str, path: str) -> list:
     return found
 
 
-def is_generated(repo: str, path: str, globs: list, markers: list) -> bool:
+def is_generated(repo: str, path: str, globs: list, markers: list, rev: str = "HEAD") -> bool:
     if any(fnmatch(path, g) for g in globs):
         return True
     try:
-        head = run_git(repo, "show", "HEAD:%s" % path)
+        head = run_git(repo, "show", "%s:%s" % (rev, path))
     except GitError:
         return False
     first_lines = "\n".join(head.splitlines()[:5])
@@ -331,10 +335,11 @@ def build_candidates(
     keywords = tuple(keywords)
     excluded = []
     limit = int(config.get("historyLimit", 60))
+    rev = config.get("ref") or "HEAD"
 
     paths = [seed_file]
     if config.get("expandToModule", True):
-        paths.extend(module_files(repo, seed_file))
+        paths.extend(module_files(repo, seed_file, rev=rev))
 
     gen_globs = config.get("generatedPathGlobs", [])
     gen_markers = config.get("generatedMarkers", [])
@@ -344,11 +349,11 @@ def build_candidates(
     seen = set()
 
     for path in paths:
-        if is_generated(repo, path, gen_globs, gen_markers):
+        if is_generated(repo, path, gen_globs, gen_markers, rev=rev):
             excluded.append("%s: generated source, not attributable" % path)
             continue
 
-        for commit, historical_path in commits_for_path(repo, path, limit=limit):
+        for commit, historical_path in commits_for_path(repo, path, limit=limit, rev=rev):
             key = (commit.sha, path)
             if key in seen:
                 continue

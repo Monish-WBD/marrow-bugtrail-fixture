@@ -22,7 +22,7 @@ from localize import localize
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
 from report import render_report
-from repo import ensure_repo
+from repo import ensure_repo, resolve_ref
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
@@ -119,7 +119,12 @@ def jira_source(bug_json: Path, repo: str, config: dict):
     description = data.get("description") or ""
     text = "%s\n\n%s" % (summary, description)
 
-    ranked = localize(text, repo, limit=int(config.get("localizeLimit", 5)))
+    ranked = localize(
+        text,
+        repo,
+        limit=int(config.get("localizeLimit", 5)),
+        rev=config.get("ref") or "HEAD",
+    )
     if not ranked:
         return None, []
 
@@ -303,6 +308,11 @@ def main() -> int:
         help="refresh a local checkout before analysing; a stale clone cannot "
         "see the pull request that caused a recent bug",
     )
+    parser.add_argument(
+        "--ref",
+        help="revision to analyse, e.g. origin/main. Defaults to the remote's "
+        "default branch when fetching, since fetch does not move HEAD",
+    )
     parser.add_argument("--config", default=str(HERE / "config.json"))
     parser.add_argument(
         "--manifest", default=str(REPO_ROOT / "fixtures" / "ground-truth.json")
@@ -340,6 +350,10 @@ def main() -> int:
         quiet=args.json,
         fetch_local=args.fetch,
     )
+    # Only pin to the remote branch when asked to, so offline fixture runs and
+    # a developer inspecting a local branch both keep working.
+    if args.ref or args.fetch:
+        config["ref"] = resolve_ref(args.repo, args.ref)
     if args.history_limit:
         config["historyLimit"] = args.history_limit
     if args.no_module_expansion:
