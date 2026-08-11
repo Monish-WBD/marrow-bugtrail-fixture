@@ -292,7 +292,7 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
             % bug.seed_file,
         )
 
-    body = render_comment(result, ranked, repo, base)
+    body = render_comment(result, ranked, repo, base, config.get("ref", ""))
 
     if not args.post:
         print("\n----- would post to %s -----\n%s\n" % (key, body))

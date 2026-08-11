@@ -252,6 +252,74 @@ def diff_hunk(repo: str, sha: str, path: str, max_lines: int = 12) -> list:
     return lines
 
 
+def function_block(
+    repo: str, rev: str, path: str, symbol: str, max_lines: int = 14
+) -> list:
+    """One function's source as it stands at a revision.
+
+    A unified diff shows which lines moved but strips the code around them, so
+    a reader still has to open the file to see what the function now does. This
+    returns the whole function, which is what makes a before-and-after possible
+    without asking anyone to leave the ticket.
+
+    Returns nothing rather than a truncated body when the function is longer
+    than max_lines. Half a function in a comment invites conclusions from code
+    that is not shown, and the diff above it is already the precise answer.
+    """
+    try:
+        blob = run_git(repo, "show", "%s:%s" % (rev, path))
+    except GitError:
+        return []
+
+    lines = blob.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        m = _DECLARATION.search(line)
+        if m and m.group(1) == symbol:
+            start = i
+            break
+    if start is None:
+        return []
+
+    body = _block_from(lines, start)
+    if not body or len(body) > max_lines:
+        return []
+    return body
+
+
+def _block_from(lines: list, start: int) -> list:
+    """Extend from a declaration to the end of its body.
+
+    Two shapes, because the languages searched do not agree on one: braces
+    close a block in Swift, Kotlin and Java, while Python closes it by
+    returning to the declaration's indentation.
+    """
+    first = lines[start]
+
+    if "{" in first:
+        depth = 0
+        for i in range(start, len(lines)):
+            depth += lines[i].count("{") - lines[i].count("}")
+            if depth <= 0 and i > start:
+                return lines[start:i + 1]
+            # A declaration whose brace opens on the next line reads as depth 0
+            # on its own line, so only stop once a brace has actually opened.
+            if depth <= 0 and i == start and "{" not in lines[i]:
+                break
+        return []
+
+    indent = len(first) - len(first.lstrip())
+    out = [first]
+    for line in lines[start + 1:]:
+        if line.strip() and (len(line) - len(line.lstrip())) <= indent:
+            break
+        out.append(line)
+    # Trailing blank lines belong to whatever follows, not to this function.
+    while out and not out[-1].strip():
+        out.pop()
+    return out
+
+
 def merge_strategy(commit: Commit) -> str:
     if _SQUASH_PR.search(commit.subject):
         return "squash merge"

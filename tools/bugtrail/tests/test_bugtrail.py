@@ -29,6 +29,7 @@ from jira_bot import (  # noqa: E402
     is_our_comment,
     render_inconclusive,
 )
+from archaeology import function_block  # noqa: E402
 from localize import localize  # noqa: E402
 from models import Candidate, Commit  # noqa: E402
 from ranking import extract_keywords, rank  # noqa: E402
@@ -487,6 +488,86 @@ class TestLocalizerReach(unittest.TestCase):
         found = self.paths("the app shows Neermita on screen")
         self.assertIn("createNew.py", found)
         self.assertNotIn("Player.swift", found)
+
+
+class TestFunctionBlock(unittest.TestCase):
+    """Pulling one function out of a file.
+
+    This is what makes the before-and-after on the ticket possible, and it has
+    to work across languages that disagree about how a block ends: braces close
+    it in Swift and Kotlin, indentation closes it in Python.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.repo = cls.tmp.name
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-C", cls.repo] + list(args),
+                check=True, capture_output=True, text=True,
+            )
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test")
+
+        Path(cls.repo, "Greeting.swift").write_text(
+            "enum Greeting {\n"
+            "    static func hello() {\n"
+            '        print("Welcome")\n'
+            "    }\n"
+            "    static func other() {\n"
+            '        print("untouched")\n'
+            "    }\n"
+            "}\n"
+        )
+        Path(cls.repo, "greet.py").write_text(
+            "def hello():\n"
+            '    print("Welcome")\n'
+            "\n"
+            "def other():\n"
+            '    print("untouched")\n'
+        )
+        Path(cls.repo, "long.swift").write_text(
+            "func sprawling() {\n" + "    doSomething()\n" * 30 + "}\n"
+        )
+        git("add", "-A")
+        git("commit", "-q", "-m", "add files")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_braces_close_the_block(self):
+        block = function_block(self.repo, "HEAD", "Greeting.swift", "hello")
+        self.assertEqual(
+            block,
+            ["    static func hello() {", '        print("Welcome")', "    }"],
+        )
+
+    def test_indentation_closes_the_block(self):
+        """Python has no closing brace, so the end is the next line that
+        returns to the declaration's indentation.
+        """
+        block = function_block(self.repo, "HEAD", "greet.py", "hello")
+        self.assertEqual(block, ["def hello():", '    print("Welcome")'])
+
+    def test_stops_before_the_next_function(self):
+        for path, symbol in (("Greeting.swift", "hello"), ("greet.py", "hello")):
+            block = "\n".join(function_block(self.repo, "HEAD", path, symbol))
+            self.assertNotIn("untouched", block, path)
+
+    def test_a_long_function_is_declined_rather_than_truncated(self):
+        """Half a function invites conclusions drawn from code that is not on
+        screen, and the diff shown in its place is already precise.
+        """
+        self.assertEqual(function_block(self.repo, "HEAD", "long.swift", "sprawling"), [])
+
+    def test_a_missing_symbol_yields_nothing(self):
+        self.assertEqual(function_block(self.repo, "HEAD", "greet.py", "absent"), [])
+        self.assertEqual(function_block(self.repo, "HEAD", "nope.swift", "hello"), [])
 
 
 if __name__ == "__main__":

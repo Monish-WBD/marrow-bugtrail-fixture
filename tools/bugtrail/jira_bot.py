@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from archaeology import changed_symbols, diff_hunk  # noqa: E402
+from archaeology import changed_symbols, diff_hunk, function_block  # noqa: E402
 from cli import analyse, jira_source, load_config  # noqa: E402
 from ranking import confidence_label  # noqa: E402
 from repo import ensure_repo, resolve_ref  # noqa: E402
@@ -148,7 +148,56 @@ def github_base(repo: str) -> str:
     return "https://github.com/%s" % m.group(1) if m else ""
 
 
-def _what_changed(repo: str, candidate) -> list:
+_CODE_LANG = {
+    ".swift": "swift", ".kt": "kotlin", ".java": "java", ".py": "python",
+    ".ts": "javascript", ".tsx": "javascript", ".js": "javascript",
+    ".go": "go", ".rb": "ruby", ".cs": "csharp",
+}
+
+
+def _code(lines: list, path: str) -> list:
+    """Wrap source in a Jira code block, syntax-highlighted where we can."""
+    ext = path[path.rfind("."):] if "." in path else ""
+    lang = _CODE_LANG.get(ext)
+    return ["{code:%s}" % lang if lang else "{code}"] + list(lines) + ["{code}"]
+
+
+def _before_and_after(repo: str, candidate, ref: str) -> list:
+    """The function as it stands, beside the way it stood before the change.
+
+    A diff answers "what moved". This answers "what does it do now, and what
+    did it do before", which is the question someone triaging actually has, and
+    it removes the step of opening the file to find out.
+
+    Both sides are read out of git, so neither is a suggestion: the second is
+    literally the code that was there, not a proposal for what to write. That
+    is the whole reason it can be shown at all - the tool has no idea what the
+    code ought to do, but it knows exactly what it used to do.
+    """
+    symbols = changed_symbols(repo, candidate.commit.sha, candidate.path)
+    if not symbols:
+        return []
+    symbol = symbols[0]
+
+    now = function_block(repo, ref, candidate.path, symbol)
+    before = function_block(repo, "%s^" % candidate.commit.sha, candidate.path, symbol)
+
+    # Nothing useful to show if either side is missing - the function was added
+    # by this commit, or renamed since, or is too long to quote.
+    if not now or not before or now == before:
+        return []
+
+    out = ["*The code now:*"]
+    out += _code(now, candidate.path)
+    out.append("*The same function before %s:*" % (
+        "PR #%d" % candidate.pr_number if candidate.pr_number
+        else candidate.commit.sha[:10]
+    ))
+    out += _code(before, candidate.path)
+    return out
+
+
+def _what_changed(repo: str, candidate, ref: str = "") -> list:
     """The function that changed, and the change itself.
 
     A file name tells you where to start reading; a function name and a diff
@@ -171,25 +220,36 @@ def _what_changed(repo: str, candidate) -> list:
             % ", ".join("{{%s()}}" % s for s in symbols[:3])
         )
 
-    hunk = diff_hunk(repo, candidate.commit.sha, candidate.path, max_lines=8)
-    if hunk:
-        out.append("*What it changed:*")
-        out.append("{code}")
-        out.extend(hunk)
-        out.append("{code}")
+    # Whole functions where they fit, and the raw diff only when they do not.
+    # Showing both says the same thing twice at roughly triple the length, and
+    # a comment people scroll past helps nobody.
+    sides = _before_and_after(repo, candidate, ref) if ref else []
+    if sides:
+        out += sides
         out.append(
-            "*If this is the regression,* the behaviour to restore is the "
-            "{{-}} side above. Offered as the change to review first, not as a "
-            "patch: this reads history, so it can say what changed but not "
-            "what the code should do."
+            "*If this is the regression,* the second block is the behaviour to "
+            "restore. It is quoted from history rather than proposed: this "
+            "reads git, so it knows what the code used to do but not what it "
+            "ought to do. Review before applying."
         )
+    else:
+        hunk = diff_hunk(repo, candidate.commit.sha, candidate.path, max_lines=8)
+        if hunk:
+            out.append("*What it changed:*")
+            out += _code(hunk, "")
+            out.append(
+                "*If this is the regression,* the behaviour to restore is the "
+                "{{-}} side above. Offered as the change to review first, not "
+                "as a patch: this reads history, so it can say what changed "
+                "but not what the code should do."
+            )
 
     if out:
         out.append("")
     return out
 
 
-def render_comment(result, ranked, repo: str, base: str) -> str:
+def render_comment(result, ranked, repo: str, base: str, ref: str = "") -> str:
     """Jira wiki markup, which the v2 comment API accepts directly."""
     bug = result.bug
     top = result.suspects[0]
@@ -213,7 +273,7 @@ def render_comment(result, ranked, repo: str, base: str) -> str:
         lines.append("* %s" % reason)
     lines.append("")
 
-    lines.extend(_what_changed(repo, c))
+    lines.extend(_what_changed(repo, c, ref))
 
     lines.append("*Starting point:* {{%s}}" % bug.seed_file)
     if ranked and ranked[0].reasons:
@@ -301,7 +361,9 @@ def main() -> int:
         prepared.append({
             "key": key,
             "commentId": issue.get("commentId"),
-            "commentBody": render_comment(result, ranked, args.repo, base),
+            "commentBody": render_comment(
+                result, ranked, args.repo, base, config["ref"]
+            ),
             "seedFile": bug.seed_file,
             "confidence": round(result.confidence, 3),
         })
