@@ -42,6 +42,14 @@ on:
         type: boolean
         default: false
 
+# The scope, declared once. It was repeated across all three invocations
+# below, which is the shape that lets a story get retargeted in two places out
+# of three - and a half-applied scope fails by commenting on the wrong tickets
+# rather than by erroring.
+env:
+  BUGTRAIL_PARENT: PLAY-126471
+  BUGTRAIL_ISSUE_TYPES: Sub-task
+
 jobs:
   triage:
     # The watch cycle is a different shape of job; it has its own below.
@@ -93,14 +101,14 @@ jobs:
           # uses rather than trusted because it arrived over the API.
           if [ "$TARGET" = "sweep" ]; then
             python3 -u tools/bugtrail/jira_agent.py \
-              --parent PLAY-126471 \
-              --issue-types "Sub-task" \
+              --parent "$BUGTRAIL_PARENT" \
+              --issue-types "$BUGTRAIL_ISSUE_TYPES" \
               --since-days 7 \
               --once $POST
           else
             python3 -u tools/bugtrail/jira_agent.py \
-              --parent PLAY-126471 \
-              --issue-types "Sub-task" \
+              --parent "$BUGTRAIL_PARENT" \
+              --issue-types "$BUGTRAIL_ISSUE_TYPES" \
               --jql "key = $TARGET" \
               --once $POST
           fi
@@ -151,8 +159,8 @@ jobs:
           started=$(date +%s)
           set +e
           timeout 3300 python3 -u tools/bugtrail/jira_agent.py \
-            --parent PLAY-126471 \
-            --issue-types "Sub-task" \
+            --parent "$BUGTRAIL_PARENT" \
+            --issue-types "$BUGTRAIL_ISSUE_TYPES" \
             --watch --interval 15 --post
           code=$?
           set -e

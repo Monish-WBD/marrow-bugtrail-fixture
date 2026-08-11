@@ -16,7 +16,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-OWNER="Monish2710"
+# Read from the remote rather than written in. It was pinned to a personal
+# account that is no longer where this repository lives, so the synthetic merge
+# commits claimed to come from a fork nobody can reach - the one detail in the
+# fabricated history that has to look real, because resolve_pr parses it.
+OWNER="$(git remote get-url origin 2>/dev/null \
+    | sed -E 's|.*[:/]([^/]+)/[^/]+(\.git)?$|\1|')"
+OWNER="${OWNER:-unknown-owner}"
 
 if git log --oneline | grep -q "preroll seek mediation"; then
   echo "ERROR: repo already seeded."
