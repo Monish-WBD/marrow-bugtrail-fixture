@@ -26,7 +26,9 @@ banner() {
 }
 
 banner "STEP 1  Triage comment in, suspect pull request out"
-python3 tools/bugtrail/cli.py --comment "$COMMENT" --report
+# --repo . keeps the demo hermetic: config points the agent at the GitHub repo,
+# and this must not start cloning midway through a presentation.
+python3 tools/bugtrail/cli.py --repo . --comment "$COMMENT" --report
 
 # Only the iOS AdSkipManager case has a compiled assertion to check against.
 if [ "$BUG" = "SYN-001" ]; then

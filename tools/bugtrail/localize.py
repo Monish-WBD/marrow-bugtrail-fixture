@@ -244,7 +244,11 @@ def localize(
         wanted = prose_terms(text)
         for path, tokens in index.items():
             shared = wanted & tokens
-            if len(shared) < 2:
+            if not shared:
+                continue
+            # Two ordinary words, or one distinctive one. Requiring two would
+            # miss a small repository where "skip" names exactly one file.
+            if len(shared) < 2 and min(df_tok[t] for t in shared) > 3:
                 continue
             weight = sum(
                 math.log(n_files / df_tok[t]) for t in shared if df_tok[t]
