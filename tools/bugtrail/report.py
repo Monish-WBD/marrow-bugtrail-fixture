@@ -72,7 +72,15 @@ def render_report(repo: str, result: Result) -> str:
     agreement = matches_suggested_team(
         owners, triage.suggested_team if triage is not None else None
     )
-    out.append("SEED FILE (CodeSage starting point)")
+    # The other CodeSage labels here sit behind `triage is not None`, so they
+    # only appear on the legacy --comment path where a CodeSage comment really
+    # was the source. This line did not, and so credited CodeSage for a file the
+    # localizer worked out from the report text - confusing on its own, and
+    # actively wrong now that deriving the file ourselves is the default.
+    out.append(
+        "SEED FILE (CodeSage starting point)" if triage is not None
+        else "SEED FILE (derived from the report text)"
+    )
     out.append("  %s" % bug.seed_file)
     if owners:
         suffix = ""

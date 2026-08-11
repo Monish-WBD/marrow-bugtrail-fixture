@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import html
 import re
 import shutil
@@ -326,12 +327,34 @@ def build_html(md: str, title: str, subtitle: str, badges: list) -> str:
                      html.escape(subtitle), chips, body)
 
 
-def main() -> int:
-    if len(sys.argv) < 3:
-        print(__doc__)
-        return 2
+DEFAULT_TITLE = "BugTrail"
+DEFAULT_SUBTITLE = (
+    "A bug report goes in. A named pull request, its author, the suspect "
+    "diff, the owning team, and a proven failing regression test come out."
+)
+DEFAULT_BADGES = [
+    "Team Documentation",
+    "Python 3.9+ · stdlib only",
+    "No network · no credentials",
+    "15 tests passing",
+    "Attribution mechanically verified",
+]
 
-    src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+
+def main() -> int:
+    # The cover text used to be written into this function, which meant a second
+    # document could only be rendered by editing the renderer. Flags instead, with
+    # the original wording as the defaults so existing invocations are unchanged.
+    ap = argparse.ArgumentParser(description="Render markdown to a styled PDF")
+    ap.add_argument("src")
+    ap.add_argument("dest")
+    ap.add_argument("--title", default=DEFAULT_TITLE)
+    ap.add_argument("--subtitle", default=DEFAULT_SUBTITLE)
+    ap.add_argument("--badge", action="append", dest="badges",
+                    help="repeatable; replaces the default set entirely")
+    args = ap.parse_args()
+
+    src, dest = Path(args.src), Path(args.dest)
     md = src.read_text()
 
     chrome = next((c for c in CHROME_CANDIDATES if Path(c).exists()), None)
@@ -341,18 +364,9 @@ def main() -> int:
 
     page = build_html(
         md,
-        title="BugTrail",
-        subtitle=(
-            "A bug report goes in. A named pull request, its author, the suspect "
-            "diff, the owning team, and a proven failing regression test come out."
-        ),
-        badges=[
-            "Team Documentation",
-            "Python 3.9+ · stdlib only",
-            "No network · no credentials",
-            "15 tests passing",
-            "Attribution mechanically verified",
-        ],
+        title=args.title,
+        subtitle=args.subtitle,
+        badges=args.badges or DEFAULT_BADGES,
     )
 
     build = Path(".build/pdf")

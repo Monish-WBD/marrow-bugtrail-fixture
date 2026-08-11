@@ -13,7 +13,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from archaeology import build_candidates
@@ -22,7 +22,7 @@ from localize import localize
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
 from report import render_report
-from repo import ensure_repo, resolve_ref
+from repo import CACHE_DIR, ensure_repo, resolve_ref
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
@@ -107,12 +107,25 @@ _IOS_SUFFIXES = (".swift", ".m", ".mm", ".h")
 _ANDROID_SUFFIXES = (".kt", ".kts", ".java")
 
 
+def _is_managed_clone(path: str) -> bool:
+    """Is this a clone we made, rather than a checkout the developer owns?"""
+    try:
+        return CACHE_DIR.resolve() in Path(path).resolve().parents
+    except OSError:
+        return False
+
+
 def jira_source(bug_json: Path, repo: str, config: dict):
     """Build a seed straight from a Jira bug, with no upstream triage bot.
 
     Expects {key, summary, description, created} - exactly what the Jira read
     path returns. The starting-point file is derived here rather than taken on
     trust, which is what removes the CodeSage dependency.
+
+    Only `created` is optional, and only because this entry point is also how a
+    person tries the tool by hand. A file typed at a prompt to see what happens
+    used to die on KeyError: 'created', which reads as the tool being broken
+    rather than the input being short of one field nobody would guess at.
     """
     data = json.loads(bug_json.read_text())
     summary = data.get("summary") or ""
@@ -140,7 +153,13 @@ def jira_source(bug_json: Path, repo: str, config: dict):
         bug_id=data.get("key", bug_json.stem),
         title=text,
         seed_file=seed,
-        reported_at=_timestamp(data["created"]),
+        # Now, when the field is absent: recency is measured against the moment
+        # the bug was reported, and for a hand-written file that moment is this
+        # one. Jira always supplies it, so this only affects manual runs.
+        reported_at=(
+            _timestamp(data["created"]) if data.get("created")
+            else datetime.now(timezone.utc)
+        ),
         platform=platform,
         display_title=summary,
     )
@@ -350,9 +369,17 @@ def main() -> int:
         quiet=args.json,
         fetch_local=args.fetch,
     )
-    # Only pin to the remote branch when asked to, so offline fixture runs and
-    # a developer inspecting a local branch both keep working.
-    if args.ref or args.fetch:
+    # Pin to the remote branch when asked to, and also whenever the repository is
+    # one we provisioned ourselves.
+    #
+    # A checkout the developer owns is left on HEAD deliberately: they may be
+    # sitting on a branch and analysing it is the point. But in the cache, HEAD
+    # is just whichever commit the clone was taken at and never moves again,
+    # because fetch updates remote-tracking refs and nothing else. That produced
+    # answers from a snapshot weeks old - a file added since simply did not
+    # exist, so the localizer picked the nearest wrong thing and the report
+    # looked confidently absurd rather than empty.
+    if args.ref or args.fetch or _is_managed_clone(args.repo):
         config["ref"] = resolve_ref(args.repo, args.ref)
     if args.history_limit:
         config["historyLimit"] = args.history_limit
