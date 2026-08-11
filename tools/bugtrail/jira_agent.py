@@ -13,17 +13,25 @@ Credentials come from the environment, never from a file in the repository:
     export JIRA_EMAIL=you@example.com
     export JIRA_API_TOKEN=...            # id.atlassian.com -> API tokens
 
+Scope is opt-in by label. A bug under any story, in any project, gets picked up
+the moment someone adds the label, and drops out again when they remove it. No
+redeploy, no admin, and nobody is opted in without asking.
+
 Shadow mode is the default. Posting requires --post, so a misconfigured run
 cannot write to a real ticket.
 
     # see what it would say, touching nothing
-    python3 tools/bugtrail/jira_agent.py --parent PLAY-126471
+    python3 tools/bugtrail/jira_agent.py --label bugtrail
 
     # actually comment, once
-    python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 --post --once
+    python3 tools/bugtrail/jira_agent.py --label bugtrail --post --once
 
     # keep watching
-    python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 --post --watch
+    python3 tools/bugtrail/jira_agent.py --label bugtrail --post --watch
+
+    # narrower scopes, if a team wants them
+    ... --label bugtrail --project PLAY
+    ... --parent PLAY-126471
 """
 
 from __future__ import annotations
@@ -113,15 +121,33 @@ def existing_comment_id(jira: Jira, key: str):
     return None
 
 
-def find_bugs(jira: Jira, parent: str, extra_jql: str = "", issue_types=("Bug",)):
-    """Scope the search. Attribution only makes sense for defects: a Story or a
-    Task describes work to do, so there is no change that "caused" it.
+def build_jql(
+    parent: str = "",
+    label: str = "",
+    project: str = "",
+    extra_jql: str = "",
+    issue_types=("Bug",),
+    since_days: int = 0,
+) -> str:
+    """Scope the search.
+
+    A label is the preferred scope. Anyone who wants attribution on their bug
+    adds the label, from any story in any project, and nobody has to redeploy
+    the agent to widen a parent. It is also the only scope a reporter can grant
+    and revoke themselves.
+
+    Types are constrained because attribution only makes sense for defects: a
+    Story or a Task describes work to do, so no change ever "caused" it.
     """
     clauses = []
+    if label:
+        clauses.append("labels = %s" % label)
     if parent:
         clauses.append(
             '(parent = %s OR issue in linkedIssues("%s"))' % (parent, parent)
         )
+    if project:
+        clauses.append("project = %s" % project)
     if extra_jql:
         clauses.append("(%s)" % extra_jql)
 
@@ -129,9 +155,19 @@ def find_bugs(jira: Jira, parent: str, extra_jql: str = "", issue_types=("Bug",)
     if types:
         clauses.append("issuetype in (%s)" % ", ".join('"%s"' % t for t in types))
 
-    jql = " AND ".join(clauses) + " ORDER BY created DESC"
+    # Without a floor, a label typo that matches an old bug drags the whole
+    # back catalogue into scope on the first run.
+    if since_days:
+        clauses.append("created >= -%dd" % since_days)
+
+    return " AND ".join(clauses) + " ORDER BY created DESC"
+
+
+def find_bugs(jira: Jira, jql: str):
     print("[jql] %s" % jql)
-    return jira.search(jql, ["summary", "description", "created", "issuetype"])
+    return jira.search(
+        jql, ["summary", "description", "created", "issuetype", "labels"]
+    )
 
 
 def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
@@ -181,8 +217,21 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--label",
+        default="",
+        help="act on bugs carrying this label, wherever they live. The opt-in "
+        "scope: reporters add the label when they want attribution",
+    )
     ap.add_argument("--parent", help="only act on children or links of this issue")
-    ap.add_argument("--jql", default="", help="extra JQL, ANDed with --parent")
+    ap.add_argument("--project", default="", help="restrict to one project key")
+    ap.add_argument("--jql", default="", help="extra JQL, ANDed with the rest")
+    ap.add_argument(
+        "--since-days",
+        type=int,
+        default=30,
+        help="ignore bugs created longer ago than this. 0 disables the floor",
+    )
     ap.add_argument(
         "--issue-types",
         default="Bug",
@@ -202,8 +251,11 @@ def main() -> int:
     ap.add_argument("--state-dir", default=str(Path.home() / ".cache" / "bugtrail"))
     args = ap.parse_args()
 
-    if not (args.parent or args.jql):
-        print("refusing to run unscoped: pass --parent or --jql", file=sys.stderr)
+    if not (args.label or args.parent or args.jql):
+        print(
+            "refusing to run unscoped: pass --label, --parent or --jql",
+            file=sys.stderr,
+        )
         return 2
 
     missing = [v for v in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
@@ -229,11 +281,18 @@ def main() -> int:
     print("[repo] %s at %s" % (repo, config["ref"]))
     print("[mode] %s" % ("POSTING" if args.post else "shadow (nothing will be written)"))
 
+    jql = build_jql(
+        parent=args.parent or "",
+        label=args.label,
+        project=args.project,
+        extra_jql=args.jql,
+        issue_types=args.issue_types.split(","),
+        since_days=args.since_days,
+    )
+
     while True:
         try:
-            issues = find_bugs(
-                jira, args.parent, args.jql, args.issue_types.split(",")
-            )
+            issues = find_bugs(jira, jql)
             print("\n[%s] %d issue(s) in scope"
                   % (time.strftime("%H:%M:%S"), len(issues)))
             for issue in issues:

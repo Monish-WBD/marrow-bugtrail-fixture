@@ -486,21 +486,28 @@ ResultSink    ←  receives ranked suspects
 
 ### 10.2 Step 1 — Trigger
 
-**Recommended: a JQL poller.** No infrastructure, no admin rights, and it naturally waits for CodeSage to post first.
+**Recommended: a JQL poller, scoped by an opt-in label.** No infrastructure, no admin rights, and every team decides for itself whether it wants BugTrail.
 
 ```sql
-project = PLAY
-  AND issuetype = Bug
-  AND created >= -1h
-  AND comment ~ "AI Triage Suggestion"     -- CodeSage has run
-  AND NOT comment ~ "BugTrail"             -- we have not
+labels = bugtrail
+  AND issuetype in ("Bug")
+  AND created >= -30d
+  ORDER BY created DESC
 ```
+
+That is exactly what `jira_agent.py --label bugtrail` builds. Three properties matter:
+
+- **Opt-in, not opt-out.** A bug under *any* story in *any* project joins the moment someone adds the label, and leaves when they remove it. Widening the scope needs no redeploy; nobody is enrolled without asking.
+- **Bugs only.** Attribution is meaningless for a Story or a Task — they describe work to do, so no past change "caused" them. The type filter is applied in the JQL and re-checked per issue, because `--jql` is caller-supplied and a comment on the wrong ticket cannot be taken back.
+- **An age floor.** Without `created >= -30d`, one label typo on an old ticket drags the back catalogue into scope on the first run.
 
 | Option | Infrastructure | Admin rights | Notes |
 | --- | --- | --- | --- |
-| **JQL poller** ✅ | None | None | Idempotent, waits for CodeSage naturally |
-| Jira Automation rule | None | Project admin | Free tier caps at 100 executions/month |
+| **JQL poller** ✅ | None | None | Idempotent; a missed tick is picked up on the next one |
+| Jira Automation rule | A reachable HTTPS endpoint | Project admin | Cannot do the work itself — see below |
 | Webhook → service | Yes | Site admin | The hardened end state |
+
+> **Automation and the script are not alternatives.** A Jira Automation rule cannot clone a repository or walk git history; all it can do is fire a *Send web request* action. So Automation is only ever the trigger, and it still needs the same script running behind a public URL. Until that service exists, the poller *is* the trigger — same JQL, no endpoint to host. The upgrade path is to point an Automation rule at the deployed service later; the scoping and the comment logic do not change.
 
 > **Licensing is not a blocker.** The REST API is available on every Jira plan. Only *native Automation rules* are metered.
 

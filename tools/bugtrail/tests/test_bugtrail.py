@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
+from jira_agent import build_jql  # noqa: E402
 from models import Candidate, Commit  # noqa: E402
 from ranking import extract_keywords, rank  # noqa: E402
 
@@ -236,6 +237,32 @@ class TestKeywords(unittest.TestCase):
         self.assertIn("intro", keywords)
         self.assertNotIn("the", keywords)
         self.assertNotIn("button", keywords)
+
+
+class TestScope(unittest.TestCase):
+    """The JQL is the safety boundary. Everything downstream trusts it, so a
+    silent widening here is how the agent ends up commenting on real tickets
+    nobody asked it to touch.
+    """
+
+    def test_label_scope_needs_no_parent(self):
+        jql = build_jql(label="bugtrail")
+        self.assertIn("labels = bugtrail", jql)
+        self.assertNotIn("parent", jql)
+
+    def test_always_constrains_issue_type(self):
+        for jql in (build_jql(label="x"), build_jql(parent="P-1"),
+                    build_jql(extra_jql="reporter = me")):
+            self.assertIn('issuetype in ("Bug")', jql)
+
+    def test_extra_jql_cannot_widen_scope(self):
+        jql = build_jql(label="bugtrail", extra_jql="status = New OR status = Open")
+        self.assertIn("(status = New OR status = Open)", jql)
+        self.assertTrue(jql.startswith("labels = bugtrail AND ("))
+
+    def test_age_floor_is_applied(self):
+        self.assertIn("created >= -7d", build_jql(label="x", since_days=7))
+        self.assertNotIn("created >=", build_jql(label="x", since_days=0))
 
 
 if __name__ == "__main__":
