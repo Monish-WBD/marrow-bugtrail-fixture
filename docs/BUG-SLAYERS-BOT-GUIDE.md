@@ -7,21 +7,22 @@
 3. What the bot posts on a ticket
 4. Words you need first
 5. How it works, stage by stage
-6. How the ranking actually scores a commit
-7. Why there is no AI model inside
-8. Set up your machine
-9. Run your first analysis, with no credentials
-10. Read the output
-11. Connect it to Jira
-12. Shadow mode, then posting for real
-13. Watch mode
-14. Running it in the cloud
-15. Prove it works
-16. When it says nothing, and why that is deliberate
-17. Troubleshooting
-18. Known limitations
-19. Where to change what
-20. Frequently asked questions
+6. How Jira and GitHub fit together
+7. How the ranking actually scores a commit
+8. Why there is no AI model inside
+9. Set up your machine
+10. Run your first analysis, with no credentials
+11. Read the output
+12. Connect it to Jira
+13. Shadow mode, then posting for real
+14. Watch mode
+15. Running it in the cloud
+16. Prove it works
+17. When it says nothing, and why that is deliberate
+18. Troubleshooting
+19. Known limitations
+20. Where to change what
+21. Frequently asked questions
 
 ---
 
@@ -197,13 +198,13 @@ function out of any revision. That is what makes the before-and-after possible.
 
 ### Stage 5 — Score the candidates
 
-`ranking.py` gives every candidate commit a score, explained in section 6, and
+`ranking.py` gives every candidate commit a score, explained in section 7, and
 attaches a plain-English reason to each point it awards.
 
 ### Stage 6 — Decide whether to speak
 
 If no file was found, or the best score is below the confidence threshold, the
-bot says so plainly rather than guessing. This is covered in section 16.
+bot says so plainly rather than guessing. This is covered in section 17.
 
 ### Stage 7 — Write the comment
 
@@ -212,7 +213,105 @@ comment from the bot already exists, it is updated instead of duplicated.
 
 ---
 
-## 6. How the ranking actually scores a commit
+## 6. How Jira and GitHub fit together
+
+This section answers the question people ask first, and the answer surprises
+most of them.
+
+### Jira does not know the repository exists
+
+There is no integration between the two. Jira has no setting pointing at our
+code, no plugin installed, and no idea that GitHub is involved at all. It is
+entirely passive: it stores tickets and answers questions when asked.
+
+The link between a Jira project and a git repository exists in exactly one
+place, our own configuration:
+
+```json
+{
+  "repo": "Monish-WBD/marrow-bugtrail-fixture"
+}
+```
+
+Change that line and the same tickets are analysed against a different codebase.
+Nothing in Jira changes, because nothing in Jira ever knew.
+
+### Who calls whom
+
+Everything is initiated by the agent. Neither Jira nor GitHub ever calls us.
+
+```
+                    +---------------------------+
+                    |  Bug Slayers Bot (agent)   |
+                    |  runs on a GitHub runner   |
+                    +---------------------------+
+                       |         |          |
+        1. ask for     |         |          |   3. post the comment
+           new tickets |         |          |      back onto the ticket
+                       v         |          v
+                 +----------+    |    +----------+
+                 |   JIRA   |    |    |   JIRA   |
+                 | REST API |    |    | REST API |
+                 +----------+    |    +----------+
+                                 |
+                 2. clone or refresh the repository,
+                    then read history with plain git
+                                 |
+                                 v
+                          +--------------+
+                          |    GITHUB    |
+                          |  git remote  |
+                          +--------------+
+```
+
+Step by step, for one ticket:
+
+1. The agent asks Jira for issues matching a JQL query, using the Jira REST API.
+2. For each issue it reads the summary and description.
+3. It clones or refreshes the repository from GitHub into `~/.cache/bugtrail`.
+4. All analysis is local `git` commands against that clone. No API calls.
+5. It posts a comment back to the ticket through the Jira REST API.
+
+GitHub plays two separate roles that are easy to confuse. It hosts the code that
+git clones in step 3, and it separately provides the machine the agent runs on.
+Those are unrelated. The agent would work identically on a laptop, analysing the
+same GitHub-hosted repository.
+
+### Which credential is used where
+
+| Credential | Used for | Where it lives |
+| --- | --- | --- |
+| `JIRA_API_TOKEN` | Reading tickets, posting comments | Repository secret, or your local env file |
+| Git access | Cloning the repository | Public repo needs none; a private one needs a deploy key |
+| `CHAIN_TOKEN` | Letting a watch cycle start its successor | Repository secret |
+
+The Jira token is the identity the comment is posted as. That is why the comment
+opens with a coloured banner naming the bot: Jira attributes the comment to
+whichever account authenticated, so without the banner it reads as though a
+colleague wrote it by hand.
+
+### Three ways a run begins
+
+**Scheduled sweep.** GitHub's cron starts the workflow every five minutes. It
+answers anything unanswered, and restarts the watcher if none is alive.
+
+**Resident watcher.** A long-running job polling every fifteen seconds, each
+cycle dispatching its successor before it ends.
+
+**Push from Jira.** Jira Automation can fire a `repository_dispatch` webhook at
+GitHub the moment a ticket is created, which is the fastest path of all and the
+only genuinely event-driven one. We do not use it, because creating an
+automation rule needs project-admin rights on a shared project that we do not
+have. The workflow already accepts the `jira-issue` event, so enabling it later
+is a Jira-side change with no code change here.
+
+> The important consequence of polling rather than being pushed to: the bot can
+> only ever be as current as its last sweep. That is why the interval is fifteen
+> seconds and the safety sweep is five minutes.
+
+---
+
+## 7. How the ranking actually scores a commit
 
 Four weighted signals, defined in `tools/bugtrail/config.json`:
 
@@ -257,7 +356,7 @@ The final number is clamped to 1.0 and reported as a confidence. Below
 
 ---
 
-## 7. Why there is no AI model inside
+## 8. Why there is no AI model inside
 
 This is the question you will be asked most often, so here is the reasoning.
 
@@ -286,7 +385,7 @@ identical output for identical input, which is what makes it testable at all.
 
 ---
 
-## 8. Set up your machine
+## 9. Set up your machine
 
 You need Python 3.9 or newer and git. That is the whole list.
 
@@ -309,7 +408,7 @@ than your setup.
 
 ---
 
-## 9. Run your first analysis, with no credentials
+## 10. Run your first analysis, with no credentials
 
 Start here. This step touches no network service and needs no Jira access, so
 nothing you do can affect a real ticket.
@@ -358,11 +457,11 @@ Now try weakening the wording. Replace the summary with "the app shows the wrong
 message when I start watching" and run it again. The confidence drops, and the
 starting-point file may change entirely, because the identifier the search
 depended on is gone. That single experiment teaches more about the tool than
-reading the source does, and it is the same effect described in section 16.
+reading the source does, and it is the same effect described in section 17.
 
 ---
 
-## 10. Read the output
+## 11. Read the output
 
 Four things in the report matter, in this order.
 
@@ -393,7 +492,7 @@ whether a wrong answer came from the localizer or from the ranker.
 
 ---
 
-## 11. Connect it to Jira
+## 12. Connect it to Jira
 
 Jira Cloud does not accept a password over its REST API. You need an API token,
 which is free and takes a minute to create.
@@ -424,7 +523,7 @@ set -a && . ~/.config/bugtrail/env && set +a
 
 ---
 
-## 12. Shadow mode, then posting for real
+## 13. Shadow mode, then posting for real
 
 The agent does not post unless you ask it to. Run it without `--post` first and
 read what it would have said:
@@ -462,7 +561,7 @@ comment by its signature and updates rather than duplicating.
 
 ---
 
-## 13. Watch mode
+## 14. Watch mode
 
 Watch mode polls on an interval and comments as tickets appear. This is what you
 want for a live demonstration, because everything happens in front of you:
@@ -485,7 +584,7 @@ like a watcher with nothing to do.
 
 ---
 
-## 14. Running it in the cloud
+## 15. Running it in the cloud
 
 Watch mode needs your laptop awake. For a bug filed at 2am from another
 timezone, the work belongs on a machine that is always on, so the same agent runs
@@ -498,7 +597,7 @@ Actions:
 | --- | --- |
 | `JIRA_BASE_URL` | Your Jira site URL |
 | `JIRA_EMAIL` | The account the comments are posted as |
-| `JIRA_API_TOKEN` | The token from section 11 |
+| `JIRA_API_TOKEN` | The token from section 12 |
 | `CHAIN_TOKEN` | A GitHub token, needed only for the resident watcher |
 
 There are three ways it runs, and they cover each other:
@@ -523,7 +622,7 @@ token of its own.
 
 ---
 
-## 15. Prove it works
+## 16. Prove it works
 
 Three levels of evidence, from fastest to most convincing.
 
@@ -555,7 +654,7 @@ therefore the right owning team, which is what triage actually needs.
 
 ---
 
-## 16. When it says nothing, and why that is deliberate
+## 17. When it says nothing, and why that is deliberate
 
 The bot fails closed. Rather than inventing a plausible suspect, it posts a note
 saying it could not attribute the change and why.
@@ -584,7 +683,7 @@ is the single most useful thing a reporter can do.
 
 ---
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
@@ -599,7 +698,7 @@ is the single most useful thing a reporter can do.
 
 ---
 
-## 18. Known limitations
+## 19. Known limitations
 
 Be able to state these before somebody else does.
 
@@ -620,7 +719,7 @@ decoration.
 
 ---
 
-## 19. Where to change what
+## 20. Where to change what
 
 | You want to change | Edit this |
 | --- | --- |
@@ -653,7 +752,7 @@ changing code:
 
 ---
 
-## 20. Frequently asked questions
+## 21. Frequently asked questions
 
 **Does it need my laptop running?** No. The cloud workflow does the same work on
 GitHub's machines. Watch mode from a terminal is for demos and development.
