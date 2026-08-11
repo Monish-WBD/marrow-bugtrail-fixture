@@ -537,11 +537,16 @@ triage   = parse_adf_comment(comment.body)          # already implemented
 ### 10.4 Step 3 — Write path
 
 ```python
-# jira_sink.py  (to build)
-MARKER = "<!-- bugtrail:v1 -->"
+# jira_bot.py
+MARKER = "bug-slayers:v1"
 
-existing = find_comment_containing(issue, MARKER)
-body     = MARKER + render_report_as_adf(result)
+# Comments written before the bot was renamed carry the old token, and the
+# marker is the only way a re-run recognises its own work. Drop it and every
+# ticket already answered looks untouched, so it gets answered twice.
+LEGACY_MARKERS = ("bugtrail:v1",)
+
+existing = find_comment_matching(issue, (MARKER,) + LEGACY_MARKERS)
+body     = render_comment(result) + "\n\n_%s_" % MARKER
 
 if existing:
     update_comment(issue, existing.id, body)   # never duplicate
@@ -552,6 +557,7 @@ else:
 **Rules:**
 
 - **One comment per issue.** Update in place; a re-run must never post a second comment.
+- **Never retire a marker.** Recognising the old one is what makes renaming the bot safe.
 - **Only post above the confidence threshold.** Below it, post nothing.
 - **Keep the disclaimer.** Mirror CodeSage's own "please review" convention.
 - **Never `@`-mention** an author below high confidence.

@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE.parent))
 import jira_webhook  # noqa: E402
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
 from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
+from jira_bot import LEGACY_MARKERS, MARKER, is_our_comment  # noqa: E402
 from models import Candidate, Commit  # noqa: E402
 from ranking import extract_keywords, rank  # noqa: E402
 
@@ -307,6 +308,17 @@ class TestRanking(unittest.TestCase):
             [old_seed, neighbour], REPORTED_AT, ("marker", "overlay"), CONFIG
         )
         self.assertEqual(suspects[0].candidate.pr_number, 11)
+
+    def test_comments_from_before_the_rename_are_still_recognised(self):
+        """The marker is how a re-run finds its own work. If a rename orphans
+        the old token, every ticket already answered looks untouched and gets
+        answered a second time.
+        """
+        self.assertTrue(is_our_comment("... _%s_" % MARKER))
+        for legacy in LEGACY_MARKERS:
+            self.assertTrue(is_our_comment("... _%s_" % legacy))
+        self.assertFalse(is_our_comment("a human wrote this"))
+        self.assertFalse(is_our_comment(""))
 
     def test_confidence_never_exceeds_one(self):
         strongest = make_candidate(days_before=0)

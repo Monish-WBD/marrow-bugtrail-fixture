@@ -62,7 +62,7 @@ def draft(
         path = "TASK/TASKTests/Player/%sRegressionTests.swift" % type_name
         content = """import XCTest
 
-/// Regression test drafted by BugTrail for {bug_id}.
+/// Regression test drafted by Bug Slayers Bot for {bug_id}.
 /// Suspected cause: {suspect_label} - {suspect_subject}
 ///
 /// Suspect change:
@@ -73,7 +73,7 @@ final class {type_name}RegressionTests: XCTestCase {{
 
     func test_{symbol}_behavesAsExpected() throws {{
         // Arrange: build the state described in the bug report.
-        // TODO(BugTrail): construct {type_name} with the inputs from the report.
+        // TODO(bug-slayers): construct {type_name} with the inputs from the report.
 
         // Act: exercise {symbol}, the symbol changed by {suspect_label}.
 
@@ -102,7 +102,7 @@ final class {type_name}RegressionTests: XCTestCase {{
 import org.junit.Test
 
 /**
- * Regression test drafted by BugTrail for {bug_id}.
+ * Regression test drafted by Bug Slayers Bot for {bug_id}.
  * Suspected cause: {suspect_label} - {suspect_subject}
  *
  * Suspect change:
@@ -115,7 +115,7 @@ class {type_name}RegressionTest {{
     @Test
     fun `{symbol} behaves as expected`() {{
         // Arrange: build the state described in the bug report.
-        // TODO(BugTrail): construct {type_name} with the inputs from the report.
+        // TODO(bug-slayers): construct {type_name} with the inputs from the report.
 
         // Act: exercise {symbol}, the symbol changed by {suspect_label}.
 

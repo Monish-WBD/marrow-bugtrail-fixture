@@ -57,7 +57,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from cli import analyse, jira_source, load_config  # noqa: E402
-from jira_bot import MARKER, github_base, render_comment  # noqa: E402
+from jira_bot import github_base, is_our_comment, render_comment  # noqa: E402
 from repo import ensure_repo, resolve_ref  # noqa: E402
 
 
@@ -137,7 +137,7 @@ class Jira:
 def existing_comment_id(jira: Jira, key: str):
     """Our own previous comment, so a re-run updates rather than duplicates."""
     for c in jira.comments(key):
-        if MARKER in (c.get("body") or ""):
+        if is_our_comment(c.get("body") or ""):
             return c.get("id")
     return None
 
