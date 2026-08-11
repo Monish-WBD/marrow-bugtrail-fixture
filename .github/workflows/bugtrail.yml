@@ -25,7 +25,12 @@ on:
   repository_dispatch:
     types: [jira-issue]
   schedule:
-    - cron: "*/15 * * * *"
+    # Deliberately off the hour. GitHub queues scheduled runs rather than
+    # guaranteeing them, and :00 is the most contended minute on the platform -
+    # a */15 schedule was observed more than seven minutes late on its first
+    # tick. Odd minutes sit in quieter slots. It is still best-effort, so treat
+    # this as a backstop and let the dispatch carry the latency requirement.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       key:
