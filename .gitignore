@@ -8,3 +8,9 @@ fixtures/real-*.json
 
 # Real ticket text and ground truth mined from internal repositories.
 .local/
+
+# Credentials belong in ~/.config/bugtrail/env, never here. Ignored anyway, so
+# a stray copy cannot be committed by accident.
+.env
+*.env
+

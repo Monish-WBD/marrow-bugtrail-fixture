@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs BugTrail every two minutes on a Mac, including after a reboot.
+
+  launchd rather than cron: it survives logout, restarts the job if it dies, and
+  does not need the terminal to stay open, which is what makes the difference
+  between "a script I ran" and "a service that is watching".
+
+  Install:
+      cp deploy/com.bugtrail.agent.plist ~/Library/LaunchAgents/
+      # edit the two REPLACE_ME paths below first
+      launchctl load ~/Library/LaunchAgents/com.bugtrail.agent.plist
+
+  Watch it work:
+      tail -f ~/.cache/bugtrail/logs/agent.log
+
+  Stop it:
+      launchctl unload ~/Library/LaunchAgents/com.bugtrail.agent.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bugtrail.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>REPLACE_ME/tools/bugtrail/run-agent.sh</string>
+        <string>--parent</string>
+        <string>PLAY-126471</string>
+        <string>--issue-types</string>
+        <string>Sub-task</string>
+        <string>--post</string>
+        <string>--once</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>REPLACE_ME/../launchd-out.log</string>
+    <key>StandardErrorPath</key>
+    <string>REPLACE_ME/../launchd-err.log</string>
+</dict>
+</plist>

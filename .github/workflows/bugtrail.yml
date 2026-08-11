@@ -1,0 +1,42 @@
+# Scheduled BugTrail sweep. This is the production shape of the agent: no
+# machine of yours has to stay awake, and the credentials live in repository
+# secrets rather than on a laptop.
+#
+# GitHub's shortest cron interval is five minutes, and scheduled runs are queued
+# rather than guaranteed on time, so treat the interval as "within a few
+# minutes" rather than a deadline. That is fine for triage - nobody reads a bug
+# report the second it is filed.
+name: BugTrail
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      post:
+        description: "Actually comment on Jira (otherwise shadow mode)"
+        type: boolean
+        default: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sweep Jira for new bugs
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          python3 tools/bugtrail/jira_agent.py \
+            --parent PLAY-126471 \
+            --issue-types "Sub-task" \
+            --since-days 7 \
+            --once \
+            ${{ (github.event_name == 'schedule' || inputs.post) && '--post' || '' }}

@@ -572,6 +572,45 @@ Clones must be kept fresh (`git fetch` before analysis) or attribution will sile
 
 Behind the Cursor skill, gated on human review. Never auto-commit a generated test.
 
+### 10.7 Step 6 — Actually running it
+
+Nothing comments on a ticket until a process is running somewhere. The comment PLAY-126480 received from *Automation for Jira* is a native rule posting fixed text — it needs no compute, so Jira can host it. BugTrail clones a repository and walks its history, so it needs a machine.
+
+**Credentials, once.** Create a token at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) and keep it out of the repository:
+
+```bash
+mkdir -p ~/.config/bugtrail
+cat > ~/.config/bugtrail/env <<'EOF'
+export JIRA_BASE_URL=https://wbdstreaming.atlassian.net
+export JIRA_EMAIL=you@wbd.com
+export JIRA_API_TOKEN=paste-token-here
+EOF
+chmod 600 ~/.config/bugtrail/env
+```
+
+Three ways to run it, in increasing order of permanence:
+
+| | How | Survives a closed laptop | Needs |
+| --- | --- | --- | --- |
+| **Terminal** | `jira_agent.py ... --watch` | No | Nothing. Best for a live demo |
+| **launchd** | `deploy/com.bugtrail.agent.plist` | Yes, and reboots | A Mac that stays on |
+| **GitHub Actions** | `.github/workflows/bugtrail.yml` | Yes | Three repository secrets |
+
+```bash
+# demo: poll every 120s in the foreground, so the audience sees it happen
+python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 \
+    --issue-types "Sub-task" --post --watch
+
+# unattended on a Mac: edit the REPLACE_ME paths first
+cp deploy/com.bugtrail.agent.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.bugtrail.agent.plist
+tail -f ~/.cache/bugtrail/logs/agent.log
+```
+
+The scheduled options run `--once` per tick rather than looping. A crashed loop stays dead until somebody notices; a scheduler just runs again on the next tick, and idempotency means a repeated sweep updates its own comment instead of posting a second one.
+
+> **It will comment as you.** A personal API token carries your identity, so tickets will show *Monish K* rather than a bot. CodeSage avoids this with a service account (`svc-wbdstreaming-play-codesage`); getting an equivalent for BugTrail is an IT request, and it is the honest answer to "is this a bot or a person?" during a demo.
+
 ---
 
 ## 11. Production hardening checklist
