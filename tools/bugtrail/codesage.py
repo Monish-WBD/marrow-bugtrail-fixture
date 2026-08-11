@@ -19,12 +19,16 @@ from typing import Optional
 
 MARKER = "AI Triage Suggestion"
 
-_PRIORITY = re.compile(r"^Suggested Priority:\s*(\S+)", re.MULTILINE)
-_SEVERITY = re.compile(r"^Suggested Severity:\s*(\S+)", re.MULTILINE)
-_COMPONENT = re.compile(r"^Suggested Component:\s*(.+?)\s*$", re.MULTILINE)
-_TEAM = re.compile(r"^Suggested Team:\s*(.+?)\s*$", re.MULTILINE)
-_FILE = re.compile(r"^\s*[-*]\s*File:\s*(.+?)\s*$", re.MULTILINE)
-_WHERE = re.compile(r"^\s*[-*]\s*Where to start:\s*(.+?)\s*$", re.MULTILINE)
+# Values are matched with [ \t]* rather than \s* on purpose. \s matches a
+# newline, so an empty field ("- File:" with nothing after it, which CodeSage
+# emits when it cannot determine a path) would otherwise capture the following
+# line and hand back a sentence of prose as a file path.
+_PRIORITY = re.compile(r"^Suggested Priority:[ \t]*(\S+)", re.MULTILINE)
+_SEVERITY = re.compile(r"^Suggested Severity:[ \t]*(\S+)", re.MULTILINE)
+_COMPONENT = re.compile(r"^Suggested Component:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_TEAM = re.compile(r"^Suggested Team:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_FILE = re.compile(r"^[ \t]*[-*][ \t]*File:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_WHERE = re.compile(r"^[ \t]*[-*][ \t]*Where to start:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _SUMMARY = re.compile(
     r"^Summary:\s*\n(.*?)(?=^\s*(?:Thought Logic:|Starting Point:)\s*$)",
     re.MULTILINE | re.DOTALL,
@@ -113,13 +117,24 @@ def _first(pattern: re.Pattern, text: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+def _looks_like_path(value: Optional[str]) -> bool:
+    """Reject a seed that is prose rather than a path.
+
+    CodeSage sometimes names a file in a sentence instead of giving a path.
+    Attributing from that produces confident nonsense, so it fails closed.
+    """
+    if not value or re.search(r"\s", value):
+        return False
+    return "/" in value or "." in value
+
+
 def parse_comment(text: str) -> Optional[CodeSageTriage]:
     """Parse a plain-text CodeSage comment. Returns None if it is not one."""
     if MARKER not in text:
         return None
 
     seed_file = _first(_FILE, text)
-    if not seed_file:
+    if not _looks_like_path(seed_file):
         return None
 
     summary_match = _SUMMARY.search(text)

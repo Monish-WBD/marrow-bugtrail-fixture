@@ -107,6 +107,33 @@ class TestCodeSageParser(unittest.TestCase):
         )
         self.assertIsNone(parse_comment(stripped))
 
+    def test_fails_closed_on_empty_file_line(self):
+        """Observed in production: CodeSage emits "- File:" with no value and
+        describes the file in prose instead. The empty value must not swallow
+        the following line and pass it off as a path."""
+        comment = (
+            "AI Triage Suggestion (CodeSage)\n"
+            "Suggested Priority: P2\n"
+            "Starting Point:\n"
+            "- File: \n"
+            "- Where to start: File search identified the highly relevant file "
+            "`MediaSourceProvider.kt`, but the full path was not available.\n"
+        )
+        self.assertIsNone(parse_comment(comment))
+
+    def test_empty_field_does_not_absorb_next_line(self):
+        comment = (
+            "AI Triage Suggestion (CodeSage)\n"
+            "Suggested Team: \n"
+            "Suggested Severity: S3\n"
+            "- File: a/b/Thing.kt\n"
+        )
+        triage = parse_comment(comment)
+        self.assertIsNotNone(triage)
+        self.assertEqual(triage.seed_file, "a/b/Thing.kt")
+        self.assertNotEqual(triage.suggested_team, "Suggested Severity: S3")
+        self.assertEqual(triage.suggested_severity, "S3")
+
 
 class TestAdfFlattening(unittest.TestCase):
     def test_flattens_paragraphs_into_lines(self):
