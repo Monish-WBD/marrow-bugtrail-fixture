@@ -1,21 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Runs BugTrail every two minutes on a Mac, including after a reboot.
+  BugTrail as a background service on a Mac.
 
-  launchd rather than cron: it survives logout, restarts the job if it dies, and
-  does not need the terminal to stay open, which is what makes the difference
-  between "a script I ran" and "a service that is watching".
+  launchd rather than a terminal: a process started from a shell dies with the
+  shell, so "the watcher is running" quietly stops being true the moment the
+  window closes or the session ends. launchd starts it at login, restarts it if
+  it crashes, and keeps it up after a reboot.
+
+  The job stays resident and polls (--watch) instead of being ticked every N
+  seconds (--once). A resident process pays for authentication and repository
+  resolution once rather than on every sweep, and KeepAlive supplies the
+  supervision that makes a long-lived loop safe. Response time is therefore the
+  poll interval - 15 seconds - not launchd's scheduling granularity.
+
+  The job runs a copy of the tool installed outside ~/Documents, ~/Desktop and
+  ~/Downloads. Those are protected by macOS privacy controls, and a launchd job
+  does not inherit the access your terminal was granted, so pointing this at a
+  checkout there fails with "Operation not permitted". Re-run the installer to
+  pick up code changes.
 
   Install:
-      cp deploy/com.bugtrail.agent.plist ~/Library/LaunchAgents/
-      # edit the two REPLACE_ME paths below first
-      launchctl load ~/Library/LaunchAgents/com.bugtrail.agent.plist
+      deploy/install-agent.sh
 
   Watch it work:
       tail -f ~/.cache/bugtrail/logs/agent.log
 
   Stop it:
-      launchctl unload ~/Library/LaunchAgents/com.bugtrail.agent.plist
+      launchctl bootout gui/$(id -u)/com.bugtrail.agent
 -->
 <plist version="1.0">
 <dict>
@@ -25,24 +38,42 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>REPLACE_ME/tools/bugtrail/run-agent.sh</string>
+        <string>__INSTALL_DIR__/run-agent.sh</string>
         <string>--parent</string>
         <string>PLAY-126471</string>
         <string>--issue-types</string>
         <string>Sub-task</string>
+        <string>--watch</string>
+        <string>--interval</string>
+        <string>15</string>
         <string>--post</string>
-        <string>--once</string>
     </array>
-
-    <key>StartInterval</key>
-    <integer>120</integer>
 
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Restart whatever the exit status. A watcher that has stopped is the one
+         failure mode nobody notices, because nothing is what it looks like when
+         no bugs have been filed. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- If it is dying on startup - bad credentials, say - this stops it from
+         spinning. launchd enforces 10s; 30s keeps the log readable. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- launchd hands jobs a minimal PATH. git is the one external command the
+         agent shells out to, and /usr/bin is where it lives. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
+    </dict>
+
     <key>StandardOutPath</key>
-    <string>REPLACE_ME/../launchd-out.log</string>
+    <string>__HOME__/.cache/bugtrail/logs/launchd-out.log</string>
     <key>StandardErrorPath</key>
-    <string>REPLACE_ME/../launchd-err.log</string>
+    <string>__HOME__/.cache/bugtrail/logs/launchd-err.log</string>
 </dict>
 </plist>

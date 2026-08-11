@@ -1,7 +1,13 @@
 #!/bin/bash
-# One BugTrail sweep. Written for a scheduler - launchd, cron or CI - which is
-# why it does a single pass and exits rather than looping: a crashed loop stays
-# dead until someone notices, whereas a scheduler restarts the next tick.
+# Runs BugTrail under a supervisor - launchd, cron or CI. It passes its
+# arguments straight through, so the caller picks the shape:
+#
+#     --once                    one sweep, for a scheduler that ticks
+#     --watch --interval 15     stay up and poll, for a supervisor that restarts
+#
+# A looping process is only safe when something is watching it, because a
+# crashed loop stays dead until a human notices. Under launchd with KeepAlive,
+# something is.
 #
 # Credentials live outside the repository, in a file only you can read:
 #
@@ -19,7 +25,11 @@ set -euo pipefail
 
 ENV_FILE="${BUGTRAIL_ENV:-$HOME/.config/bugtrail/env}"
 LOG_DIR="${BUGTRAIL_LOG_DIR:-$HOME/.cache/bugtrail/logs}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Resolved relative to this script rather than to a repository root, so the same
+# script works from a checkout and from the copy the installer places outside
+# ~/Documents. See deploy/install-agent.sh for why that copy has to exist.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
@@ -36,7 +46,7 @@ LOG="$LOG_DIR/agent.log"
 # ticket, the first question is always which run produced it.
 {
     echo "===== $(date '+%Y-%m-%d %H:%M:%S %z')"
-    python3 "$REPO_ROOT/tools/bugtrail/jira_agent.py" "$@"
+    # -u because in watch mode this process never exits, and a buffered log is
+    # an empty log: you cannot tell a working watcher from a wedged one.
+    python3 -u "$HERE/jira_agent.py" "$@"
 } >> "$LOG" 2>&1
-
-tail -n 20 "$LOG"

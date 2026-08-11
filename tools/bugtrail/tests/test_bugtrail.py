@@ -55,12 +55,14 @@ def make_candidate(
     is_substantive=True,
     is_rename=False,
     keyword_hits=("marker",),
+    lines_changed=4,
+    hours_before=0,
 ):
     commit = Commit(
         sha=sha,
         author_name="Test Author",
         author_email="test@example.com",
-        authored_at=REPORTED_AT - timedelta(days=days_before),
+        authored_at=REPORTED_AT - timedelta(days=days_before, hours=hours_before),
         subject=subject,
         parents=("parent1",),
     )
@@ -69,7 +71,7 @@ def make_candidate(
         path="Some/Path.swift",
         is_seed_file=is_seed_file,
         pr_number=pr_number,
-        lines_changed=4,
+        lines_changed=lines_changed,
         is_substantive=is_substantive,
         keyword_hits=keyword_hits,
         is_rename=is_rename,
@@ -231,11 +233,85 @@ class TestRanking(unittest.TestCase):
 
     def test_below_threshold_yields_no_suspects(self):
         config = dict(CONFIG, minConfidence=0.99)
-        suspects, confidence = rank(
-            [make_candidate()], REPORTED_AT, ("marker",), config
-        )
+        weak = make_candidate(days_before=400, is_seed_file=False, keyword_hits=())
+        suspects, confidence = rank([weak], REPORTED_AT, ("marker",), config)
         self.assertEqual(suspects, [])
         self.assertGreater(confidence, 0)
+
+    def test_latest_substantive_change_outranks_the_file_author(self):
+        """Keyword overlap alone favours whoever wrote the file, because they
+        wrote every word in it. The later change is the regression.
+
+        The shape here is taken from a real pair: one commit creates a greeting
+        and another edits its wording, both on the same day, with the author
+        ahead by a single term. The bonus is deliberately only large enough to
+        overturn a modest keyword lead - an overwhelming one should still win.
+        """
+        keywords = ("playback", "session", "banner", "prints", "hello", "welcome")
+        author = make_candidate(
+            sha="aaa", pr_number=1, hours_before=6, lines_changed=8,
+            keyword_hits=("playback", "session", "welcome"),
+        )
+        changer = make_candidate(
+            sha="bbb", pr_number=2, hours_before=1, lines_changed=2,
+            keyword_hits=("hello", "welcome"),
+        )
+        suspects, _ = rank([author, changer], REPORTED_AT, keywords, CONFIG)
+        self.assertEqual(suspects[0].candidate.pr_number, 2)
+        self.assertIn(
+            "most recent substantive change to this code", suspects[0].reasons
+        )
+
+    def test_boost_skips_cosmetic_and_renamed_changes(self):
+        """Otherwise a whitespace pass inherits the blame for being last."""
+        real = make_candidate(sha="aaa", pr_number=1, days_before=5)
+        tidy = make_candidate(
+            sha="bbb", pr_number=2, days_before=0,
+            is_substantive=False, keyword_hits=(),
+        )
+        suspects, _ = rank([real, tidy], REPORTED_AT, ("marker",), CONFIG)
+        self.assertEqual(suspects[0].candidate.pr_number, 1)
+
+    def test_recent_unrelated_neighbour_loses_to_the_real_culprit(self):
+        """Recency and substantiveness are free to any commit, so a change with
+        no tie to the report must not out-argue the one that edited the
+        starting-point file - even when it is two months fresher.
+        """
+        culprit = make_candidate(
+            sha="aaa", pr_number=5, days_before=48,
+            is_seed_file=True, keyword_hits=("preroll",),
+        )
+        neighbour = make_candidate(
+            sha="bbb", pr_number=2, days_before=0,
+            is_seed_file=False, keyword_hits=(),
+        )
+        suspects, _ = rank(
+            [culprit, neighbour], REPORTED_AT, ("preroll", "skip"), CONFIG
+        )
+        self.assertEqual(suspects[0].candidate.pr_number, 5)
+
+    def test_recent_neighbour_still_counts_when_it_matches_the_report(self):
+        """The damping is about relevance, not about being a neighbour: a nearby
+        file that mentions the symptom is exactly how a fix in one file breaks
+        another.
+        """
+        old_seed = make_candidate(
+            sha="aaa", pr_number=3, days_before=100,
+            is_seed_file=True, keyword_hits=("marker",),
+        )
+        neighbour = make_candidate(
+            sha="bbb", pr_number=11, days_before=1,
+            is_seed_file=False, keyword_hits=("marker", "overlay"),
+        )
+        suspects, _ = rank(
+            [old_seed, neighbour], REPORTED_AT, ("marker", "overlay"), CONFIG
+        )
+        self.assertEqual(suspects[0].candidate.pr_number, 11)
+
+    def test_confidence_never_exceeds_one(self):
+        strongest = make_candidate(days_before=0)
+        _, confidence = rank([strongest], REPORTED_AT, ("marker",), CONFIG)
+        self.assertLessEqual(confidence, 1.0)
 
 
 class TestKeywords(unittest.TestCase):

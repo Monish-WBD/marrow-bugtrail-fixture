@@ -1,25 +1,50 @@
-# Scheduled BugTrail sweep. This is the production shape of the agent: no
-# machine of yours has to stay awake, and the credentials live in repository
-# secrets rather than on a laptop.
+# BugTrail triage, triggered from Jira and run on GitHub's machines.
 #
-# GitHub's shortest cron interval is five minutes, and scheduled runs are queued
-# rather than guaranteed on time, so treat the interval as "within a few
-# minutes" rather than a deadline. That is fine for triage - nobody reads a bug
-# report the second it is filed.
+# The point of running here rather than on a laptop is that a reporter filing a
+# bug at 2am from another timezone gets the same answer as one filing it while
+# you happen to have a terminal open. Nothing local has to be awake.
+#
+# Two ways in, deliberately:
+#
+#   repository_dispatch  A Jira Automation rule fires the moment a work item is
+#                        created and names the issue. This is the fast path -
+#                        the comment lands about a minute later, most of which
+#                        is GitHub starting a runner.
+#
+#   schedule             A sweep every 15 minutes that catches anything the
+#                        rule missed: automation disabled, GitHub having an
+#                        incident, someone moving an item into scope after it
+#                        was created. Commenting is idempotent, so the sweep
+#                        re-reading an item the rule already handled is a no-op
+#                        rather than a duplicate.
+#
+# Setting the Jira rule up is documented in BUGTRAIL.md.
 name: BugTrail
 
 on:
+  repository_dispatch:
+    types: [jira-issue]
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
+      key:
+        description: "Single issue key, e.g. PLAY-126484 (blank sweeps everything in scope)"
+        type: string
+        default: ""
       post:
         description: "Actually comment on Jira (otherwise shadow mode)"
         type: boolean
         default: false
 
+# A second run for the same issue would only reach "already commented", so let
+# an in-flight run finish rather than queueing behind itself.
+concurrency:
+  group: bugtrail-${{ github.event.client_payload.key || inputs.key || 'sweep' }}
+  cancel-in-progress: false
+
 jobs:
-  sweep:
+  triage:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,15 +53,48 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Sweep Jira for new bugs
+      - name: Validate the requested issue key
+        id: scope
+        env:
+          # Via the environment, never interpolated into the script body. The
+          # payload is whatever the holder of the trigger credential sent, and
+          # "${{ ... }}" pasted into a run block is executed by the shell before
+          # it is ever a string.
+          RAW_KEY: ${{ github.event.client_payload.key || inputs.key }}
+        run: |
+          if [ -z "${RAW_KEY:-}" ]; then
+            echo "target=sweep" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! printf '%s' "$RAW_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
+            echo "not an issue key: $RAW_KEY" >&2
+            exit 1
+          fi
+          echo "target=$RAW_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Triage
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TARGET: ${{ steps.scope.outputs.target }}
+          # Shadow mode unless asked: a manual run is usually someone checking
+          # what it would say.
+          POST: ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.post) && '--post' || '' }}
         run: |
-          python3 tools/bugtrail/jira_agent.py \
-            --parent PLAY-126471 \
-            --issue-types "Sub-task" \
-            --since-days 7 \
-            --once \
-            ${{ (github.event_name == 'schedule' || inputs.post) && '--post' || '' }}
+          # --parent is applied whatever the trigger says, so a dispatch naming
+          # some unrelated ticket is filtered out by the same rule the sweep
+          # uses rather than trusted because it arrived over the API.
+          if [ "$TARGET" = "sweep" ]; then
+            python3 -u tools/bugtrail/jira_agent.py \
+              --parent PLAY-126471 \
+              --issue-types "Sub-task" \
+              --since-days 7 \
+              --once $POST
+          else
+            python3 -u tools/bugtrail/jira_agent.py \
+              --parent PLAY-126471 \
+              --issue-types "Sub-task" \
+              --jql "key = $TARGET" \
+              --once $POST
+          fi

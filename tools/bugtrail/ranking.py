@@ -36,6 +36,15 @@ def extract_keywords(title: str, extra: tuple = (), limit: int = _MAX_KEYWORDS) 
     return tuple(merged[:limit])
 
 
+def _is_relevant(candidate: Candidate) -> bool:
+    """Is there any evidence tying this change to the report at all?
+
+    Touching the starting-point file counts, and so does mentioning the
+    reporter's vocabulary. A change with neither is only "nearby and recent".
+    """
+    return candidate.is_seed_file or bool(candidate.keyword_hits)
+
+
 def _recency(candidate: Candidate, reported_at: datetime, half_life_days: float) -> float:
     delta = (reported_at - candidate.commit.authored_at).total_seconds()
     age_days = max(delta, 0) / 86400
@@ -90,11 +99,58 @@ def _score(
         score *= 1.0 - cosmetic_penalty
         reasons.append("comment or whitespace only, so unlikely to change behaviour")
 
+    if not _is_relevant(candidate):
+        # Recency and substantiveness are worth 0.45 between them, and neither
+        # says anything about whether a change relates to the bug. Without this,
+        # any sizeable commit landing anywhere in the module this week outranks
+        # the one commit that edited the starting-point file - which is how a
+        # greeting tweak ends up blamed for an ad-skip defect.
+        score *= 1.0 - float(config.get("unrelatedModulePenalty", 0.6))
+        reasons.append(
+            "different file in the same module, and nothing in it matches the report"
+        )
+
     return Suspect(candidate=candidate, score=round(score, 4), reasons=reasons)
+
+
+def _boost_latest_change(scored: list, config: dict) -> None:
+    """Favour the newest real change to this code.
+
+    Keyword overlap alone rewards whichever commit introduced the most
+    vocabulary, which is nearly always the one that created the file: it
+    mentions every term because it wrote every line. So a report of "this used
+    to say X and now says Y" gets attributed to the author who first wrote X,
+    rather than whoever changed it to Y.
+
+    Most bugs worth attributing are regressions, and for a regression the last
+    substantive change to the code is the better suspect. Renames and
+    comment-only edits are skipped, or a whitespace pass would inherit the
+    blame simply by being last.
+    """
+    bonus = float(config.get("latestChangeBonus", 0.10))
+    if bonus <= 0:
+        return
+
+    newest = None
+    for suspect in scored:
+        c = suspect.candidate
+        if c.is_rename or not c.is_substantive or not _is_relevant(c):
+            continue
+        if newest is None or (
+            c.commit.authored_at > newest.candidate.commit.authored_at
+        ):
+            newest = suspect
+
+    if newest is not None:
+        # Clamped, because the score doubles as the confidence shown on the
+        # ticket. "Confidence 1.09" invites the question of what 1.0 meant.
+        newest.score = round(min(newest.score + bonus, 1.0), 4)
+        newest.reasons.append("most recent substantive change to this code")
 
 
 def rank(candidates: list, reported_at: datetime, keywords: tuple, config: dict) -> tuple:
     scored = [_score(c, reported_at, keywords, config) for c in candidates]
+    _boost_latest_change(scored, config)
 
     # One entry per pull request: several commits can belong to the same PR.
     best = {}

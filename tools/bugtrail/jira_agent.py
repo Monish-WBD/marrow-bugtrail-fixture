@@ -274,11 +274,23 @@ def main() -> int:
     ap.add_argument("--update", action="store_true", help="refresh an existing comment")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--watch", action="store_true")
-    ap.add_argument("--interval", type=int, default=120)
+    ap.add_argument(
+        "--interval", type=int, default=None,
+        help="seconds between sweeps; implies --watch",
+    )
     ap.add_argument("--min-confidence", type=float, default=0.25)
     ap.add_argument("--history-limit", type=int, default=60)
     ap.add_argument("--state-dir", default=str(Path.home() / ".cache" / "bugtrail"))
     args = ap.parse_args()
+
+    # Asking for a polling interval only means anything if we intend to poll.
+    # Requiring --watch alongside it fails silently in the worst way: the agent
+    # prints one healthy-looking sweep and exits, and you go on believing a
+    # watcher is up until someone files a bug and nothing answers it.
+    if args.interval is not None and not args.once:
+        args.watch = True
+    if args.interval is None:
+        args.interval = 120
 
     if not (args.label or args.parent or args.jql):
         print(
@@ -331,6 +343,16 @@ def main() -> int:
     )
 
     while True:
+        # Refreshed every sweep, not once at startup. A watcher left running
+        # overnight would otherwise keep answering from the clone it had when it
+        # started, and confidently fail to mention the PR that landed an hour
+        # ago. ensure_repo skips the fetch if the clone is recent, so the cost
+        # of asking each time is nil.
+        repo = ensure_repo(
+            args.repo or config.get("repo") or "", fetch_local=True, quiet=True
+        )
+        config["ref"] = resolve_ref(repo, args.ref)
+
         try:
             issues = find_bugs(jira, jql)
             print("\n[%s] %d issue(s) in scope"

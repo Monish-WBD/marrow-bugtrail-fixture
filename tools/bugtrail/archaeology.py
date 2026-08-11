@@ -136,12 +136,17 @@ def module_files(repo: str, seed_path: str, rev: str = "HEAD") -> list:
     return [p for p in out.splitlines() if p and p != seed_path]
 
 
-def resolve_pr(repo: str, commit: Commit) -> Optional[int]:
+def resolve_pr(repo: str, commit: Commit, rev: str = "HEAD") -> Optional[int]:
     """Map a commit to its pull request number.
 
     Squash and merge commits carry the number in the subject. A commit merged via
     a merge commit does not, so walk forward along the ancestry path to the
     earliest merge that contains it.
+
+    The walk has to end at the same revision everything else is analysed
+    against. Against HEAD it silently finds nothing for any commit that has been
+    fetched but not checked out, and the report degrades to a bare SHA - which
+    reads as "no pull request" rather than "looked in the wrong place".
     """
     m = _SQUASH_PR.search(commit.subject)
     if m:
@@ -157,7 +162,7 @@ def resolve_pr(repo: str, commit: Commit) -> Optional[int]:
             "--merges",
             "--ancestry-path",
             "--format=%s",
-            "%s..HEAD" % commit.sha,
+            "%s..%s" % (commit.sha, rev),
         )
     except GitError:
         return None
@@ -383,7 +388,7 @@ def build_candidates(
                     commit=commit,
                     path=path,
                     is_seed_file=(path == seed_file),
-                    pr_number=resolve_pr(repo, commit),
+                    pr_number=resolve_pr(repo, commit, rev),
                     lines_changed=lines_changed,
                     is_substantive=substantive,
                     keyword_hits=hits,
