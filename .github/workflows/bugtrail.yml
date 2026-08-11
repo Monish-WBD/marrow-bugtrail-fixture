@@ -179,7 +179,18 @@ jobs:
       - name: Hand over to the next cycle
         # Even when the watch step failed: a transient Jira outage should not
         # end the chain permanently.
-        if: always()
+        #
+        # Not always(), which also covers cancellation. The only thing that
+        # cancels this job is a newer cycle replacing it through the
+        # concurrency group - so handing over from a cancelled run adds a
+        # second chain rather than continuing the one, and every cancellation
+        # doubles the number of watchers instead of holding it at one. Two
+        # were observed running together for exactly this reason, which risks
+        # both reading a ticket as unanswered and commenting on it twice.
+        #
+        # It also restores the documented way to stop: cancelling the run in
+        # flight now ends the chain, where before it silently respawned.
+        if: ${{ !cancelled() }}
         env:
           # Deliberately not GITHUB_TOKEN. Events raised with it do not start
           # new workflow runs - GitHub blocks that to stop recursive triggering
