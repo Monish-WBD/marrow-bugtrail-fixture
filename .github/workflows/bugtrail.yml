@@ -23,7 +23,7 @@ name: BugTrail
 
 on:
   repository_dispatch:
-    types: [jira-issue]
+    types: [jira-issue, watch-cycle]
   schedule:
     # Deliberately off the hour. GitHub queues scheduled runs rather than
     # guaranteeing them, and :00 is the most contended minute on the platform -
@@ -42,15 +42,16 @@ on:
         type: boolean
         default: false
 
-# A second run for the same issue would only reach "already commented", so let
-# an in-flight run finish rather than queueing behind itself.
-concurrency:
-  group: bugtrail-${{ github.event.client_payload.key || inputs.key || 'sweep' }}
-  cancel-in-progress: false
-
 jobs:
   triage:
+    # The watch cycle is a different shape of job; it has its own below.
+    if: github.event.action != 'watch-cycle'
     runs-on: ubuntu-latest
+    # A second run for the same issue would only reach "already commented", so
+    # let an in-flight run finish rather than queueing behind itself.
+    concurrency:
+      group: bugtrail-triage-${{ github.event.client_payload.key || inputs.key || 'sweep' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -103,3 +104,87 @@ jobs:
               --jql "key = $TARGET" \
               --once $POST
           fi
+
+  # A resident watcher, kept alive by re-triggering itself.
+  #
+  # This exists because the two normal triggers are both unavailable here. The
+  # Jira Automation rule needs project admin on PLAY, which we do not have. The
+  # cron schedule below is configured correctly on the default branch and has
+  # simply never fired - four consecutive ticks were missed - because GitHub
+  # activates new schedules on its own timetable and treats them as best effort.
+  #
+  # So each run polls for a fixed window and then dispatches its own successor,
+  # which gives continuous 15-second response using nothing but GitHub. The
+  # chain has to be started once by hand:
+  #
+  #     gh api repos/<owner>/<repo>/dispatches -f event_type=watch-cycle
+  #
+  # Honest about what this is: Actions is a CI system, not a hosting platform,
+  # and a permanently resident job is outside what it is meant for. It is a
+  # stopgap while the Automation rule is blocked, not the end state. Stop it by
+  # disabling the workflow - the chain dies with the run in flight.
+  watch:
+    if: github.event.action == 'watch-cycle'
+    runs-on: ubuntu-latest
+    # Above the watch window, so the job is never killed mid-cycle and the
+    # successor is always dispatched.
+    timeout-minutes: 65
+    concurrency:
+      # One chain only. Cancelling rather than queueing means a stray dispatch
+      # replaces the running watcher instead of stacking a second one behind it,
+      # which would otherwise double every cycle.
+      group: bugtrail-watch
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Watch Jira for one cycle
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          started=$(date +%s)
+          set +e
+          timeout 3300 python3 -u tools/bugtrail/jira_agent.py \
+            --parent PLAY-126471 \
+            --issue-types "Sub-task" \
+            --watch --interval 15 --post
+          code=$?
+          set -e
+          # 124 is timeout ending a healthy cycle, which is the expected exit.
+          echo "watch cycle exited with $code"
+
+          # A crash on startup - bad credentials, say - would otherwise chain at
+          # full speed and burn the account's minutes in minutes. Floor the
+          # cycle so a broken chain stays slow enough to notice and stop.
+          elapsed=$(( $(date +%s) - started ))
+          if [ "$elapsed" -lt 300 ]; then
+            echo "cycle ended after ${elapsed}s; holding before handing over"
+            sleep $(( 300 - elapsed ))
+          fi
+
+      - name: Hand over to the next cycle
+        # Even when the watch step failed: a transient Jira outage should not
+        # end the chain permanently.
+        if: always()
+        env:
+          # Deliberately not GITHUB_TOKEN. Events raised with it do not start
+          # new workflow runs - GitHub blocks that to stop recursive triggering
+          # - so the chain needs a token of its own.
+          CHAIN_TOKEN: ${{ secrets.CHAIN_TOKEN }}
+        run: |
+          if [ -z "${CHAIN_TOKEN:-}" ]; then
+            echo "::error::CHAIN_TOKEN secret is missing, so the chain ends here."
+            exit 1
+          fi
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer $CHAIN_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type":"watch-cycle"}'
+          echo "next cycle dispatched"
