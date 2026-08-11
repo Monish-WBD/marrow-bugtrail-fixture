@@ -20,6 +20,7 @@ from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
 from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
 from jira_bot import (  # noqa: E402
     BOT_NAME,
+    FOOTER,
     LEGACY_MARKERS,
     MARKER,
     bot_banner,
@@ -338,6 +339,20 @@ class TestRanking(unittest.TestCase):
         note = render_inconclusive("PLAY-1", "nothing matched")
         self.assertTrue(note.startswith("{panel"), note[:40])
         self.assertIn(BOT_NAME, note.split("{panel}")[0])
+
+    def test_the_signature_is_what_identifies_our_own_comment(self):
+        """The visible footer replaced the bug-slayers:v1 token, so it is now
+        load-bearing rather than decorative. If its wording drifts out of step
+        with MARKER, every ticket already answered stops looking answered and
+        earns a duplicate on the next sweep.
+        """
+        note = render_inconclusive("PLAY-1", "nothing matched")
+        self.assertIn(FOOTER, note)
+        self.assertTrue(is_our_comment(note))
+
+        # And no leftover token on the ticket, which is the point of the change.
+        self.assertNotIn("bug-slayers:v1", note)
+        self.assertNotIn("inconclusive", note)
 
     def test_the_banner_nests_no_macros(self):
         """A quote or heading inside a panel renders inconsistently across
