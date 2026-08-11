@@ -19,8 +19,10 @@ sys.path.insert(0, str(HERE.parent))
 from codesage import flatten_adf, parse_adf_comment, parse_comment  # noqa: E402
 from jira_agent import build_jql, is_scope_narrow_enough  # noqa: E402
 from jira_bot import (  # noqa: E402
+    BOT_NAME,
     LEGACY_MARKERS,
     MARKER,
+    bot_banner,
     is_inconclusive,
     is_our_comment,
     render_inconclusive,
@@ -324,9 +326,28 @@ class TestRanking(unittest.TestCase):
     def test_a_dead_end_is_reported_rather_than_passed_over(self):
         """Silence cannot be told apart from a broken agent."""
         body = render_inconclusive("PLAY-1", "no candidate file located", "detail")
-        self.assertIn("no suspect found", body)
+        self.assertIn("no suspect found", body.lower())
         self.assertIn("no candidate file located", body)
         self.assertTrue(is_our_comment(body))
+
+    def test_every_comment_opens_by_naming_the_bot(self):
+        """Jira's byline says whoever's token authenticated, which is a person.
+        The banner is the only place the author is stated correctly, so it has
+        to lead both kinds of comment rather than only the successful one.
+        """
+        note = render_inconclusive("PLAY-1", "nothing matched")
+        self.assertTrue(note.startswith("{panel"), note[:40])
+        self.assertIn(BOT_NAME, note.split("{panel}")[0])
+
+    def test_the_banner_nests_no_macros(self):
+        """A quote or heading inside a panel renders inconsistently across
+        Jira's editors, and a comment showing raw markup reads worse than a
+        plain one.
+        """
+        banner = "\n".join(bot_banner())
+        inner = banner.split("{panel:", 1)[1].split("{panel}", 1)[0]
+        for macro in ("{quote}", "h3.", "{code", "{panel:"):
+            self.assertNotIn(macro, inner)
 
     def test_a_dead_end_note_is_marked_replaceable(self):
         """A note has to be distinguishable from an answer, or the ticket keeps

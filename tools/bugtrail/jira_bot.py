@@ -60,6 +60,28 @@ DISCLAIMER = (
 INCONCLUSIVE_MARKER = "inconclusive"
 
 
+def bot_banner() -> list:
+    """A coloured header identifying the author, because Jira's will not.
+
+    Jira attributes a comment to whoever's token authenticated it, and ours is a
+    personal one - so every comment reads as written by a colleague, which is
+    the single distinction a triage suggestion most needs to make. The service
+    account that fixes it properly is an access request away, and until it
+    lands this is the part of the byline we control: a banner the eye reaches
+    before the grey name above it.
+
+    Deliberately no nested macros. A {quote} or heading inside a panel renders
+    inconsistently depending on which editor the site is using, and a comment
+    that shows raw markup is worse than a plain one.
+    """
+    return [
+        "{panel:bgColor=#deebff}",
+        "🤖 *%s* — automated triage, not a human judgement" % BOT_NAME,
+        "{panel}",
+        "",
+    ]
+
+
 def is_our_comment(body: str) -> bool:
     return any(m in (body or "") for m in KNOWN_MARKERS)
 
@@ -75,8 +97,8 @@ def render_inconclusive(bug_key: str, reason: str, detail: str = "") -> str:
     looked and found nothing. Naming the reason also makes the note actionable,
     because every reason here has a fix the reporter can apply.
     """
-    lines = [
-        "h3. %s — no suspect found" % BOT_NAME,
+    lines = bot_banner() + [
+        "h3. No suspect found",
         "",
         "*Reason:* %s" % reason,
     ]
@@ -110,7 +132,7 @@ def render_comment(result, ranked, repo: str, base: str) -> str:
     bug = result.bug
     top = result.suspects[0]
     c = top.candidate
-    lines = ["h3. %s — suspect change" % BOT_NAME, ""]
+    lines = bot_banner() + ["h3. Suspect change", ""]
 
     if c.pr_number and base:
         pr = "[PR #%d|%s/pull/%d]" % (c.pr_number, base, c.pr_number)
