@@ -514,11 +514,11 @@ The agent refuses to accept Sub-tasks unless `--parent` or `--label` is also giv
 
 | Option | Infrastructure | Admin rights | Notes |
 | --- | --- | --- | --- |
-| **JQL poller** ✅ | None | None | Idempotent; a missed tick is picked up on the next one |
-| Jira Automation rule | A reachable HTTPS endpoint | Project admin | Cannot do the work itself — see below |
-| Webhook → service | Yes | Site admin | The hardened end state |
+| JQL poller | A machine of yours, awake | None | Idempotent; a missed tick is picked up on the next one |
+| **Automation → GitHub Actions** ✅ | None of ours | Project admin | Fires on creation; GitHub supplies the compute — §10.8 |
+| Automation → self-hosted webhook | A reachable HTTPS endpoint | Project admin | Fastest, but something must keep it up |
 
-> **Automation and the script are not alternatives.** A Jira Automation rule cannot clone a repository or walk git history; all it can do is fire a *Send web request* action. So Automation is only ever the trigger, and it still needs the same script running behind a public URL. Until that service exists, the poller *is* the trigger — same JQL, no endpoint to host. The upgrade path is to point an Automation rule at the deployed service later; the scoping and the comment logic do not change.
+> **Automation and the script are not alternatives.** A Jira Automation rule cannot clone a repository or walk git history; all it can do is fire a *Send web request*. So Automation is always the trigger and never the worker. What it can call, though, is GitHub's own API: a `repository_dispatch` starts a workflow that does the work on GitHub's runners, so "a reachable endpoint" stops meaning "a server we operate". That is the deployed shape — see §10.8. The poller remains useful as a demo and as a backstop, and the scoping and comment logic are identical either way.
 
 > **Licensing is not a blocker.** The REST API is available on every Jira plan. Only *native Automation rules* are metered.
 
@@ -588,29 +588,62 @@ EOF
 chmod 600 ~/.config/bugtrail/env
 ```
 
-Three ways to run it, in increasing order of permanence:
+Four ways to run it, in increasing order of permanence:
 
 | | How | Latency | Needs |
 | --- | --- | --- | --- |
 | **Terminal** | `jira_agent.py ... --watch` | Poll interval | Nothing. Best for a live demo |
-| **launchd** | `deploy/com.bugtrail.agent.plist` | 2 minutes | A Mac that stays on |
-| **GitHub Actions** | `.github/workflows/bugtrail.yml` | ~15 minutes | Three repository secrets |
-| **Webhook** | `jira_webhook.py` + Automation rule | Seconds | A public URL and project admin |
+| **launchd** | `deploy/install-agent.sh` | 15 seconds | A Mac that stays awake |
+| **GitHub Actions, scheduled** | `.github/workflows/bugtrail.yml` | ~15 minutes | Three repository secrets |
+| **Jira → GitHub Actions** | Automation rule + `repository_dispatch` | ~30 seconds | A GitHub token, project admin |
 
 ```bash
-# demo: poll every 120s in the foreground, so the audience sees it happen
+# demo: poll every 15s in the foreground, so the audience sees it happen
 python3 tools/bugtrail/jira_agent.py --parent PLAY-126471 \
-    --issue-types "Sub-task" --post --watch
+    --issue-types "Sub-task" --post --interval 15
 
-# unattended on a Mac: edit the REPLACE_ME paths first
-cp deploy/com.bugtrail.agent.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.bugtrail.agent.plist
+# unattended on a Mac
+deploy/install-agent.sh
 tail -f ~/.cache/bugtrail/logs/agent.log
 ```
 
-The scheduled options run `--once` per tick rather than looping. A crashed loop stays dead until somebody notices; a scheduler just runs again on the next tick, and idempotency means a repeated sweep updates its own comment instead of posting a second one.
+`--interval` implies `--watch`. It used to require both, and asking for an interval without it produced one healthy-looking sweep and a silent exit — the worst failure mode available, since a watcher that has stopped looks exactly like a watcher with nothing to do.
 
-**Commenting the instant a ticket is filed.** Polling is only ever as fast as its interval. To have the comment appear seconds after someone clicks *Create*, Jira has to push to us — the same mechanism behind the *Automation for Jira* comment on PLAY-126480, except ours calls out to a process that can read git:
+The launchd job runs a **copy** of the tool in `~/.local/share/bugtrail`, placed there by the installer. macOS gates `~/Documents`, `~/Desktop` and `~/Downloads` behind per-application consent, and a launchd job inherits none of the access your terminal was granted: point it at a checkout in `~/Documents` and it fails with `Operation not permitted` forever. Copying out is preferable to granting Full Disk Access to `/bin/bash`. Re-run the installer after changing code.
+
+### 10.8 Step 7 — Triggering from Jira, with nothing running locally
+
+Every option above needs a machine of yours to be awake. A reporter filing a bug at 2am from another timezone should get the same answer as one filing it while you have a terminal open, so the trigger belongs in Jira and the compute belongs somewhere that is always on.
+
+A Jira Automation rule fires a `repository_dispatch` at GitHub the moment a work item is created, and the workflow does the triage on GitHub's runners. Measured end to end, the comment lands about 20–30 seconds after *Create*, most of which is GitHub starting a runner.
+
+First, the repository secrets the runner needs:
+
+```bash
+gh secret set JIRA_BASE_URL  --repo <owner>/<repo>   # https://wbdstreaming.atlassian.net
+gh secret set JIRA_EMAIL     --repo <owner>/<repo>
+gh secret set JIRA_API_TOKEN --repo <owner>/<repo>
+```
+
+Then a GitHub token for Jira to authenticate with — a fine-grained token scoped to this one repository with **Contents: Read and write**, which is what `repository_dispatch` requires. Then in **Project settings → Automation → Create rule**:
+
+| Field | Value |
+| --- | --- |
+| When | Work item created |
+| If | Issue Type equals Sub-task, parent = PLAY-126471 |
+| Then | Send web request |
+| URL | `https://api.github.com/repos/<owner>/<repo>/dispatches` |
+| Method | POST |
+| Headers | `Authorization: Bearer <github-token>`, `Accept: application/vnd.github+json` |
+| Body | custom data — `{"event_type": "jira-issue", "client_payload": {"key": "{{issue.key}}"}}` |
+
+The rule sends nothing but the issue key, and the workflow treats it as a hint rather than an instruction. The key is validated against `^[A-Z][A-Z0-9]*-[0-9]+$` and passed through the environment rather than interpolated into the shell, because `${{ }}` pasted into a `run:` block is executed before it is ever a string. The issue is then read back from Jira with our own credentials and filtered through the same `--parent` scope the sweep uses, so naming a ticket over the API does not put it in scope — a dispatch for an unrelated ticket resolves to `0 issue(s) in scope`.
+
+The 15-minute schedule stays enabled underneath as a backstop, covering a disabled rule, a GitHub incident, or an item moved into scope after creation. Because commenting is idempotent, the sweep re-reading an item the rule already handled is a no-op rather than a duplicate.
+
+The scheduled options run `--once` per tick rather than looping. A crashed loop stays dead until somebody notices; a scheduler just runs again on the next tick.
+
+**Self-hosting the receiver instead.** The dispatch route above needs no server of ours at all, which is usually the right trade. If you would rather Jira called our code directly — no GitHub in the path, and single-digit-second latency — `jira_webhook.py` is that receiver, at the cost of an endpoint someone has to keep running:
 
 ```bash
 export BUGTRAIL_WEBHOOK_SECRET=$(python3 -c "import secrets;print(secrets.token_urlsafe(32))")
