@@ -65,7 +65,7 @@ def _score(
 
     reasons = []
     if candidate.is_seed_file:
-        reasons.append("modifies the file CodeSage pointed to")
+        reasons.append("modifies the starting-point file")
     else:
         reasons.append("same module (%s)" % candidate.path)
 

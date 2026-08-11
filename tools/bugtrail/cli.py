@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from archaeology import build_candidates
 from codesage import parse_comment
+from localize import localize
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
 from report import render_report
@@ -30,7 +32,10 @@ def load_config(path: Path) -> dict:
 
 
 def _timestamp(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    value = value.replace("Z", "+00:00")
+    # Jira returns +0000; fromisoformat wants +00:00 before Python 3.11.
+    value = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value)
+    return datetime.fromisoformat(value)
 
 
 def fixture_source(manifest_path: Path) -> list:
@@ -95,6 +100,45 @@ def codesage_source(
         triage=triage,
         display_title=title,
     )
+
+
+_IOS_SUFFIXES = (".swift", ".m", ".mm", ".h")
+_ANDROID_SUFFIXES = (".kt", ".kts", ".java")
+
+
+def jira_source(bug_json: Path, repo: str, config: dict):
+    """Build a seed straight from a Jira bug, with no upstream triage bot.
+
+    Expects {key, summary, description, created} - exactly what the Jira read
+    path returns. The starting-point file is derived here rather than taken on
+    trust, which is what removes the CodeSage dependency.
+    """
+    data = json.loads(bug_json.read_text())
+    summary = data.get("summary") or ""
+    description = data.get("description") or ""
+    text = "%s\n\n%s" % (summary, description)
+
+    ranked = localize(text, repo, limit=int(config.get("localizeLimit", 5)))
+    if not ranked:
+        return None, []
+
+    seed = ranked[0].path
+    lowered = seed.lower()
+    platform = None
+    if lowered.endswith(_ANDROID_SUFFIXES):
+        platform = "android"
+    elif lowered.endswith(_IOS_SUFFIXES):
+        platform = "ios"
+
+    bug = TriageInput(
+        bug_id=data.get("key", bug_json.stem),
+        title=text,
+        seed_file=seed,
+        reported_at=_timestamp(data["created"]),
+        platform=platform,
+        display_title=summary,
+    )
+    return bug, ranked
 
 
 def analyse(repo: str, bug: TriageInput, config: dict) -> Result:
@@ -257,6 +301,11 @@ def main() -> int:
     parser.add_argument(
         "--comment", help="path to a CodeSage comment to use as the seed"
     )
+    parser.add_argument(
+        "--bug-json",
+        help="path to a Jira bug {key, summary, description, created}; the seed "
+        "file is derived by the localizer instead of taken from a triage bot",
+    )
     parser.add_argument("--reported-at", help="ISO timestamp the bug was reported")
     parser.add_argument(
         "--report", action="store_true", help="render the full attribution report"
@@ -280,6 +329,31 @@ def main() -> int:
     if args.no_module_expansion:
         config["expandToModule"] = False
     manifest = Path(args.manifest)
+
+    if args.bug_json:
+        bug, ranked = jira_source(Path(args.bug_json), args.repo, config)
+        if bug is None:
+            print("Could not locate any candidate file from the bug text.")
+            return 0
+        result = analyse(args.repo, bug, config)
+        result.notes.append(
+            "seed chosen by localizer: %s" % "; ".join(ranked[0].reasons)
+        )
+        if len(ranked) > 1:
+            result.notes.append(
+                "other candidates considered:\n"
+                + "\n".join("  %.2f  %s" % (c.score, c.path) for c in ranked[1:])
+            )
+        if args.json:
+            payload = to_dict(result)
+            payload["localization"] = [
+                {"path": c.path, "score": round(c.score, 3), "reasons": c.reasons}
+                for c in ranked
+            ]
+            print(json.dumps(payload, indent=2))
+        else:
+            print(render_report(args.repo, result) if args.report else render(result))
+        return 0
 
     if args.comment:
         comment_path = Path(args.comment)
