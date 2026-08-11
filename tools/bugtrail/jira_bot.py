@@ -30,6 +30,7 @@ sys.path.insert(0, str(HERE))
 
 from cli import analyse, jira_source, load_config  # noqa: E402
 from ranking import confidence_label  # noqa: E402
+from repo import ensure_repo  # noqa: E402
 
 MARKER = "<!-- bugtrail:v1 -->"
 DISCLAIMER = (
@@ -98,7 +99,15 @@ def render_comment(result, ranked, repo: str, base: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", required=True)
+    ap.add_argument(
+        "--repo",
+        help="local path, clone URL, or owner/name. Defaults to config 'repo'",
+    )
+    ap.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="skip refreshing the checkout (offline reruns only)",
+    )
     ap.add_argument("--issues", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--config", default=str(HERE / "config.json"))
@@ -111,6 +120,13 @@ def main() -> int:
 
     config = load_config(Path(args.config))
     config["historyLimit"] = args.history_limit
+
+    # Posting to a real ticket off a stale clone is worse than posting nothing,
+    # so the refresh is on by default here.
+    args.repo = ensure_repo(
+        args.repo or config.get("repo") or "",
+        fetch_local=not args.no_fetch,
+    )
     base = github_base(args.repo)
 
     issues = json.loads(Path(args.issues).read_text())

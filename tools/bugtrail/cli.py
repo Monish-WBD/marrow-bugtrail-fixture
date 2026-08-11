@@ -22,6 +22,7 @@ from localize import localize
 from models import Result, TriageInput
 from ranking import confidence_label, extract_keywords, rank
 from report import render_report
+from repo import ensure_repo
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
@@ -291,7 +292,17 @@ def run_eval(repo: str, manifest_path: Path, config: dict) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="BugTrail suspect-PR attribution")
-    parser.add_argument("--repo", default=str(REPO_ROOT))
+    parser.add_argument(
+        "--repo",
+        help="local path, clone URL, or owner/name. Defaults to config 'repo'. "
+        "A remote is cloned once into ~/.cache/bugtrail and refreshed per run",
+    )
+    parser.add_argument(
+        "--fetch",
+        action="store_true",
+        help="refresh a local checkout before analysing; a stale clone cannot "
+        "see the pull request that caused a recent bug",
+    )
     parser.add_argument("--config", default=str(HERE / "config.json"))
     parser.add_argument(
         "--manifest", default=str(REPO_ROOT / "fixtures" / "ground-truth.json")
@@ -324,6 +335,11 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
+    args.repo = ensure_repo(
+        args.repo or config.get("repo") or str(REPO_ROOT),
+        quiet=args.json,
+        fetch_local=args.fetch,
+    )
     if args.history_limit:
         config["historyLimit"] = args.history_limit
     if args.no_module_expansion:
