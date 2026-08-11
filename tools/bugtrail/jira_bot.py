@@ -28,6 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from archaeology import changed_symbols, diff_hunk  # noqa: E402
 from cli import analyse, jira_source, load_config  # noqa: E402
 from ranking import confidence_label  # noqa: E402
 from repo import ensure_repo, resolve_ref  # noqa: E402
@@ -127,6 +128,47 @@ def github_base(repo: str) -> str:
     return "https://github.com/%s" % m.group(1) if m else ""
 
 
+def _what_changed(repo: str, candidate) -> list:
+    """The function that changed, and the change itself.
+
+    A file name tells you where to start reading; a function name and a diff
+    tell you what to read. The text report has shown both since the beginning
+    and the Jira comment did not, which left the people who only ever see Jira
+    with the least useful half of the analysis.
+
+    The fix is framed as a direction rather than a patch, and the distinction
+    is the honest one: this tool reads git history, so it can show what changed
+    and when, but nothing here knows what the code is supposed to do. A
+    confident wrong patch in a triage comment is worse than no patch, because
+    it invites someone to apply it without reading.
+    """
+    out = []
+
+    symbols = changed_symbols(repo, candidate.commit.sha, candidate.path)
+    if symbols:
+        out.append(
+            "*Function changed:* %s"
+            % ", ".join("{{%s()}}" % s for s in symbols[:3])
+        )
+
+    hunk = diff_hunk(repo, candidate.commit.sha, candidate.path, max_lines=8)
+    if hunk:
+        out.append("*What it changed:*")
+        out.append("{code}")
+        out.extend(hunk)
+        out.append("{code}")
+        out.append(
+            "*If this is the regression,* the behaviour to restore is the "
+            "{{-}} side above. Offered as the change to review first, not as a "
+            "patch: this reads history, so it can say what changed but not "
+            "what the code should do."
+        )
+
+    if out:
+        out.append("")
+    return out
+
+
 def render_comment(result, ranked, repo: str, base: str) -> str:
     """Jira wiki markup, which the v2 comment API accepts directly."""
     bug = result.bug
@@ -150,6 +192,8 @@ def render_comment(result, ranked, repo: str, base: str) -> str:
     for reason in top.reasons:
         lines.append("* %s" % reason)
     lines.append("")
+
+    lines.extend(_what_changed(repo, c))
 
     lines.append("*Starting point:* {{%s}}" % bug.seed_file)
     if ranked and ranked[0].reasons:
@@ -226,7 +270,13 @@ def main() -> int:
             continue
 
         result = analyse(args.repo, bug, config)
-        if not result.suspects or result.confidence < args.min_confidence:
+        if not result.suspects:
+            # Distinct from the threshold case below. Reporting both as
+            # "confidence N below threshold" invites a hunt for the near miss
+            # that N implies, when nothing was found to be near.
+            skipped.append((key, "no change tied to %s" % bug.seed_file))
+            continue
+        if result.confidence < args.min_confidence:
             skipped.append((key, "confidence %.2f below threshold" % result.confidence))
             continue
 

@@ -276,10 +276,17 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
 
     result = analyse(repo, bug, config)
     if not result.suspects or result.confidence < args.min_confidence:
+        # Two different outcomes, and reporting them as one misleads. "Confidence
+        # 0.33, below threshold" implies a near miss worth chasing; with no
+        # suspects at all there is nothing behind the number to chase.
+        if not result.suspects:
+            reason = "no change to the starting-point file could be tied to this report"
+        else:
+            reason = "confidence %.2f, below the %.2f threshold" % (
+                result.confidence, args.min_confidence
+            )
         return say_nothing_found(
-            jira, key, comment_id, provisional, args,
-            "confidence %.2f, below the %.2f threshold"
-            % (result.confidence, args.min_confidence),
+            jira, key, comment_id, provisional, args, reason,
             "The starting point looks like {{%s}}, but no change to it stood "
             "out clearly enough to name one. Worth a look by hand."
             % bug.seed_file,
