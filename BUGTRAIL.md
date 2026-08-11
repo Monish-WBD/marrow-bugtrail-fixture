@@ -590,11 +590,12 @@ chmod 600 ~/.config/bugtrail/env
 
 Three ways to run it, in increasing order of permanence:
 
-| | How | Survives a closed laptop | Needs |
+| | How | Latency | Needs |
 | --- | --- | --- | --- |
-| **Terminal** | `jira_agent.py ... --watch` | No | Nothing. Best for a live demo |
-| **launchd** | `deploy/com.bugtrail.agent.plist` | Yes, and reboots | A Mac that stays on |
-| **GitHub Actions** | `.github/workflows/bugtrail.yml` | Yes | Three repository secrets |
+| **Terminal** | `jira_agent.py ... --watch` | Poll interval | Nothing. Best for a live demo |
+| **launchd** | `deploy/com.bugtrail.agent.plist` | 2 minutes | A Mac that stays on |
+| **GitHub Actions** | `.github/workflows/bugtrail.yml` | ~15 minutes | Three repository secrets |
+| **Webhook** | `jira_webhook.py` + Automation rule | Seconds | A public URL and project admin |
 
 ```bash
 # demo: poll every 120s in the foreground, so the audience sees it happen
@@ -608,6 +609,30 @@ tail -f ~/.cache/bugtrail/logs/agent.log
 ```
 
 The scheduled options run `--once` per tick rather than looping. A crashed loop stays dead until somebody notices; a scheduler just runs again on the next tick, and idempotency means a repeated sweep updates its own comment instead of posting a second one.
+
+**Commenting the instant a ticket is filed.** Polling is only ever as fast as its interval. To have the comment appear seconds after someone clicks *Create*, Jira has to push to us — the same mechanism behind the *Automation for Jira* comment on PLAY-126480, except ours calls out to a process that can read git:
+
+```bash
+export BUGTRAIL_WEBHOOK_SECRET=$(python3 -c "import secrets;print(secrets.token_urlsafe(32))")
+python3 tools/bugtrail/jira_webhook.py --parent PLAY-126471 \
+    --issue-types "Sub-task" --post
+cloudflared tunnel --url http://localhost:8787      # Jira must be able to reach it
+```
+
+Then in **Project settings → Automation → Create rule**:
+
+| Field | Value |
+| --- | --- |
+| When | Work item created |
+| If | Issue Type equals Sub-task, parent = PLAY-126471 |
+| Then | Send web request |
+| URL | `https://<your-tunnel>/jira` |
+| Headers | `X-BugTrail-Token: <the secret>` |
+| Body | custom data — `{"key": "{{issue.key}}"}` |
+
+The rule sends nothing but the issue key. Summary, type and parent are read back from Jira with our own credentials, because a request arriving over the internet is not evidence about what a ticket contains. Holding the secret proves the caller is our rule; it does not prove the ticket is one we agreed to comment on, so the handler re-checks the issue against the same JQL scope the poller uses and declines anything outside it.
+
+This is the one option that needs **project admin rights** to configure, and a URL Jira can reach. A tunnel is fine for a demo; production would host the same script behind a real endpoint.
 
 > **It will comment as you.** A personal API token carries your identity, so tickets will show *Monish K* rather than a bot. CodeSage avoids this with a service account (`svc-wbdstreaming-play-codesage`); getting an equivalent for BugTrail is an IT request, and it is the honest answer to "is this a bot or a person?" during a demo.
 
