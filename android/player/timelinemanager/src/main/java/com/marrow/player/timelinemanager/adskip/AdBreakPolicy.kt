@@ -31,6 +31,12 @@ data class AdBreakPolicy(
      */
     val backwardSeekReArmThresholdMs: Long = 1_500L,
     /**
+     * How long after a marker begins the viewer becomes eligible to skip it,
+     * assuming their tier is entitled. The UI surfaces a "Skip in Ns" countdown
+     * during this window.
+     */
+    val skipAvailableAfterMs: Long = 5_000L,
+    /**
      * Tiers that are allowed to skip mid-roll markers even when the marker
      * itself is not flagged skippable. Preroll is handled separately.
      */
