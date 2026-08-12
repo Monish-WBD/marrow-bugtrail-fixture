@@ -23,6 +23,7 @@ public enum AdBreakDecision: Equatable {
 public final class AdBreakScheduler {
     private let markers: TimelineMarkers
     private let policy: AdBreakPolicy
+    private let countdown: SkipCountdown
 
     private var lastEvaluatedPosition: TimeInterval?
     private var lastPrefetchedMarkerStart: TimeInterval?
@@ -36,7 +37,17 @@ public final class AdBreakScheduler {
     ) {
         self.markers = markers
         self.policy = policy
+        self.countdown = SkipCountdown(policy: policy)
         self.clock = clock
+    }
+
+    /// Countdown state for the marker enclosing `position`, or
+    /// `.notApplicable` when the viewer is not currently inside a marker.
+    public func skipCountdown(at position: TimeInterval) -> SkipCountdownState {
+        guard let marker = markers.marker(at: position), !marker.isPreroll else {
+            return .notApplicable
+        }
+        return countdown.state(for: marker, at: position)
     }
 
     /// Called by the player for each progress tick.

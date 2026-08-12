@@ -29,9 +29,22 @@ class AdBreakScheduler(
     private val policy: AdBreakPolicy = AdBreakPolicy.DEFAULT,
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
+    private val countdown: SkipCountdown = SkipCountdown(policy)
+
     private var lastEvaluatedPositionMs: Long? = null
     private var lastPrefetchedMarkerStartMs: Long? = null
     private var lastPrefetchWallClockMs: Long? = null
+
+    /**
+     * Countdown state for the marker enclosing [positionMs], or
+     * [SkipCountdownState.NOT_APPLICABLE] when the viewer is not currently
+     * inside a mid-roll marker.
+     */
+    fun skipCountdown(positionMs: Long): SkipCountdownState {
+        val marker = processor.markerAt(positionMs) ?: return SkipCountdownState.NOT_APPLICABLE
+        if (marker.isPreroll) return SkipCountdownState.NOT_APPLICABLE
+        return countdown.state(marker, positionMs)
+    }
 
     /**
      * Called by the player for each progress tick.
