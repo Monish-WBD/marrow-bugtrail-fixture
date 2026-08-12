@@ -51,6 +51,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -239,6 +240,31 @@ def say_nothing_found(
     return "noted: %s" % reason
 
 
+def issue_age_seconds(created: str | None) -> float | None:
+    """Return the age of an issue in seconds, given its Jira ``created`` field.
+
+    Jira serialises ``created`` as ISO 8601 with a zone offset like
+    ``2026-08-12T18:32:15.123+0530``. Returns ``None`` when the field is
+    missing or unparseable, so callers can treat it as "unknown, act now"
+    rather than crashing a sweep on a malformed timestamp.
+    """
+    if not created:
+        return None
+    try:
+        # Python's ``fromisoformat`` on 3.11+ accepts the trailing zone offset
+        # unchanged; on older versions it needs a colon in the offset. The
+        # replace below is a no-op on well-formed strings.
+        normalised = created
+        if len(normalised) >= 5 and normalised[-5] in "+-" and normalised[-3] != ":":
+            normalised = normalised[:-2] + ":" + normalised[-2:]
+        created_at = datetime.fromisoformat(normalised)
+    except ValueError:
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created_at).total_seconds()
+
+
 def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
     key = issue["key"]
     fields = issue.get("fields") or {}
@@ -249,6 +275,19 @@ def process(jira: Jira, issue, repo: str, config: dict, base: str, args) -> str:
     kind = ((fields.get("issuetype") or {}).get("name") or "").lower()
     if allowed and kind not in allowed:
         return "skipped: issue type %r not in %s" % (kind, allowed)
+
+    # Cool-off window. A freshly filed ticket often gets edits from the
+    # reporter in the first minute (screenshots, extra logs, a tightened
+    # summary); commenting instantly can attach attribution to a title that
+    # then gets rewritten. Skipping here is safe because the sweep is
+    # idempotent - the issue will be picked up on the next tick once it is
+    # old enough.
+    if args.min_age_seconds > 0:
+        age = issue_age_seconds(fields.get("created"))
+        if age is not None and age < args.min_age_seconds:
+            return "skipped: too fresh (%.0fs < %ds), will retry next sweep" % (
+                age, args.min_age_seconds
+            )
 
     comment_id, provisional = existing_comment(jira, key)
     if comment_id and not args.update and not provisional:
@@ -338,6 +377,14 @@ def main() -> int:
     ap.add_argument(
         "--interval", type=int, default=None,
         help="seconds between sweeps; implies --watch",
+    )
+    ap.add_argument(
+        "--min-age-seconds",
+        type=int,
+        default=0,
+        help="skip issues younger than this many seconds so the reporter has "
+        "time to finalise the ticket before the bot comments. The issue is "
+        "picked up on the next sweep once it is old enough. 0 disables it.",
     )
     ap.add_argument("--min-confidence", type=float, default=0.25)
     ap.add_argument("--history-limit", type=int, default=60)
