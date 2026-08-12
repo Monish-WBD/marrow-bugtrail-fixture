@@ -20,6 +20,14 @@ public enum AdBreakDecision: Equatable {
 /// `evaluate(at:tier:)` on every progress tick and the scheduler decides
 /// what, if anything, should happen next. It intentionally does not own a
 /// timer of its own so it stays deterministic under tests.
+///
+/// Skip semantics (shared with the Android implementation):
+///   * The viewer becomes skip-eligible `policy.skipAvailableAfter` seconds
+///     after the enclosing marker's `startTime`.
+///   * Until then, `skipCountdown(at:)` returns a rounded-up `secondsUntilSkip`
+///     so the UI never renders `0s` while the button is still disabled.
+///   * Preroll markers opt out of the countdown surface entirely; their
+///     skip flag is resolved by the ad-break pipeline upstream.
 public final class AdBreakScheduler {
     private let markers: TimelineMarkers
     private let policy: AdBreakPolicy

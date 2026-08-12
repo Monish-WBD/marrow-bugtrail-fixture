@@ -23,6 +23,14 @@ sealed class AdBreakDecision {
  * [evaluate] on every progress tick and the scheduler decides what, if
  * anything, should happen next. It intentionally does not own a timer of
  * its own so it stays deterministic under tests.
+ *
+ * Skip semantics (shared with the iOS implementation):
+ *  * The viewer becomes skip-eligible [AdBreakPolicy.skipAvailableAfterMs]
+ *    after the enclosing marker's [TimelineMarker.startMs].
+ *  * Until then, [skipCountdown] returns a rounded-up `secondsUntilSkip`
+ *    so the UI never renders `0s` while the button is still disabled.
+ *  * Preroll markers opt out of the countdown surface entirely; their
+ *    skip flag is resolved by the ad-break pipeline upstream.
  */
 class AdBreakScheduler(
     private val processor: TimelineMarkerProcessor,
