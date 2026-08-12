@@ -22,6 +22,10 @@ public struct AdBreakPolicy: Equatable {
     /// larger than this threshold. Small backwards nudges (frame-accurate seeks)
     /// should not fire another prefetch.
     public let backwardSeekReArmThreshold: TimeInterval
+    /// How long after a marker begins the viewer becomes eligible to skip it,
+    /// assuming their tier is entitled. The UI surfaces a "Skip in Ns" countdown
+    /// during this window.
+    public let skipAvailableAfter: TimeInterval
     /// Tiers that are allowed to skip mid-roll markers even when the marker
     /// itself is not flagged skippable. Preroll is handled separately.
     public let midrollSkipAllowedTiers: Set<SubscriptionTier>
@@ -30,11 +34,13 @@ public struct AdBreakPolicy: Equatable {
         prefetchLeadTime: TimeInterval = 6.0,
         minimumPrefetchInterval: TimeInterval = 2.0,
         backwardSeekReArmThreshold: TimeInterval = 1.5,
+        skipAvailableAfter: TimeInterval = 5.0,
         midrollSkipAllowedTiers: Set<SubscriptionTier> = [.premium, .adFree]
     ) {
         self.prefetchLeadTime = prefetchLeadTime
         self.minimumPrefetchInterval = minimumPrefetchInterval
         self.backwardSeekReArmThreshold = backwardSeekReArmThreshold
+        self.skipAvailableAfter = skipAvailableAfter
         self.midrollSkipAllowedTiers = midrollSkipAllowedTiers
     }
 

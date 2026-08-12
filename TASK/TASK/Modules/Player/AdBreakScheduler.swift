@@ -20,9 +20,18 @@ public enum AdBreakDecision: Equatable {
 /// `evaluate(at:tier:)` on every progress tick and the scheduler decides
 /// what, if anything, should happen next. It intentionally does not own a
 /// timer of its own so it stays deterministic under tests.
+///
+/// Skip semantics (shared with the Android implementation):
+///   * The viewer becomes skip-eligible `policy.skipAvailableAfter` seconds
+///     after the enclosing marker's `startTime`.
+///   * Until then, `skipCountdown(at:)` returns a rounded-up `secondsUntilSkip`
+///     so the UI never renders `0s` while the button is still disabled.
+///   * Preroll markers opt out of the countdown surface entirely; their
+///     skip flag is resolved by the ad-break pipeline upstream.
 public final class AdBreakScheduler {
     private let markers: TimelineMarkers
     private let policy: AdBreakPolicy
+    private let countdown: SkipCountdown
 
     private var lastEvaluatedPosition: TimeInterval?
     private var lastPrefetchedMarkerStart: TimeInterval?
@@ -36,7 +45,17 @@ public final class AdBreakScheduler {
     ) {
         self.markers = markers
         self.policy = policy
+        self.countdown = SkipCountdown(policy: policy)
         self.clock = clock
+    }
+
+    /// Countdown state for the marker enclosing `position`, or
+    /// `.notApplicable` when the viewer is not currently inside a marker.
+    public func skipCountdown(at position: TimeInterval) -> SkipCountdownState {
+        guard let marker = markers.marker(at: position), !marker.isPreroll else {
+            return .notApplicable
+        }
+        return countdown.state(for: marker, at: position)
     }
 
     /// Called by the player for each progress tick.
